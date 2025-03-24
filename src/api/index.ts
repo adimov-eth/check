@@ -1,71 +1,71 @@
-import crypto from 'crypto'
-import type { Request, Response } from 'express'
+// src/api/index.ts
+import { config } from '@/config';
+import { logger } from '@/utils/logger';
+import { clerkMiddleware } from '@clerk/express';
+import cors from 'cors';
+import express from 'express';
+import helmet from 'helmet';
 
+import { handleError } from '@/middleware/error';
+import { apiRateLimiter } from '@/middleware/rate-limit';
 
-import express from 'express'
-import { requireAuth } from '../middleware/auth'
-import { handleError } from '../middleware/error'
-import { deleteUser, upsertUser } from '../services/user-service'
-import userRoutes from './routes/user'
+import audioRoutes from './routes/audio';
+import conversationRoutes from './routes/conversation';
+import subscriptionRoutes from './routes/subscription';
+import userRoutes from './routes/user';
+import webhookRoutes from './routes/webhook';
 
+// Create Express app
+export const app = express();
 
+// Apply middleware
+app.use(helmet());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
-const verifyWebhook = (req: Request): boolean => {
-    const payload = JSON.stringify(req.body)
-    const signature = req.headers['svix-signature'] as string
-    const timestamp = req.headers['svix-timestamp'] as string
-    const secret = process.env.CLERK_WEBHOOK_SECRET?.split('_')[1] ?? ''
-    
-    const computedSignature = crypto
-      .createHmac('sha256', secret)
-      .update(`${timestamp}.${payload}`)
-      .digest('hex')
-    
-    return computedSignature === signature
-  }
-
-const app = express()
-
-app.use(express.json())
+// Request logger
 app.use((req, res, next) => {
-  // Capture raw body for webhook verification
-  let data = ''
-  req.on('data', chunk => { data += chunk })
-  req.on('end', () => {
-    req.rawBody = data
-    next()
-  })
-})
-
-app.get('/health', (_req, res) => res.json({ status: 'ok' }))
-
-app.use('/users', requireAuth, userRoutes)
-
-app.post('/webhooks/clerk', async (req: Request, res: Response) => {
-  if (!verifyWebhook(req)) return res.status(400).json({ error: 'Invalid signature' })
+  logger.debug(`${req.method} ${req.path}`);
+  const start = Date.now();
   
-  const event = req.body
-  switch (event.type) {
-    case 'user.created':
-    case 'user.updated':
-      await upsertUser({
-        id: event.data.id,
-        email: event.data.email_addresses[0].email_address,
-        name: event.data.first_name,
-      })
-      break
-    case 'user.deleted':
-      await deleteUser(event.data.id)
-      break
-    default:
-      console.log(`Unhandled event: ${event.type}`)
-  }
-  res.json({ success: true })
-})
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    logger.debug(`${req.method} ${req.path} ${res.statusCode} - ${duration}ms`);
+  });
+  
+  next();
+});
 
-app.use(handleError)
+// Parse JSON requests
+app.use(express.json());
 
-export const startServer = (port: number): void => {
-  app.listen(port, () => console.log(`Server running on port ${port}`))
-}
+// Clerk authentication
+app.use(clerkMiddleware({
+  secretKey: config.clerkSecretKey
+}));
 
+// Default rate limiter
+app.use(apiRateLimiter);
+
+// Health check endpoint
+app.get('/health', (_, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// Routes
+app.use('/audio', audioRoutes);
+app.use('/conversations', conversationRoutes);
+app.use('/subscriptions', subscriptionRoutes);
+app.use('/users', userRoutes);
+app.use('/webhook', webhookRoutes);
+
+// 404 handler
+app.use((_, res) => {
+  res.status(404).json({ error: 'Not Found' });
+});
+
+// Error handler
+app.use(handleError);

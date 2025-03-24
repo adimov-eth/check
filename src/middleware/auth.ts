@@ -1,8 +1,7 @@
-import { clerkMiddleware } from '@clerk/express';
-import type { Request } from 'express';
+import { clerkMiddleware, type ExpressRequestWithAuth } from '@clerk/express';
 
 export const requireAuth = clerkMiddleware({
   secretKey: process.env.CLERK_SECRET_KEY ?? '',
 })
 
-export const getUserId = (req: Request): string | null => req.auth?.userId ?? null
+export const getUserId = (req: ExpressRequestWithAuth): string | null => req.auth?.userId ?? null
