@@ -5,7 +5,8 @@
         "script": "bun",
         "args": "src/index.ts",
         "env": {
-          "NODE_ENV": "production"
+          "NODE_ENV": "production",
+          "PORT": "3001"
         }
       },
       {
