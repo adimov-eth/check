@@ -6,7 +6,7 @@
     "start": "bun src/index.ts",
     "worker:audio": "bun src/workers/audio.worker.ts",
     "worker:gpt": "bun src/workers/gpt.worker.ts",
-    "workers": "bun src/workers/audio.worker.ts & bun src/workers/gpt.worker.ts",
+    "workers": "bun src/workers/audio-worker.ts & bun src/workers/gpt-worker.ts",
     "clean-queues": "bun src/scripts/clean-queues.ts",
     "dev": "bun --watch src/index.ts",
     "dev:workers": "bun --watch src/workers/index.ts",
