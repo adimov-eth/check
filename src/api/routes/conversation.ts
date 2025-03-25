@@ -1,4 +1,4 @@
-import { requireAuth } from '@/middleware/auth';
+import { getUserId, requireAuth } from '@/middleware/auth';
 import { AuthenticationError, NotFoundError, ValidationError } from '@/middleware/error';
 import { conversationsRateLimiter } from '@/middleware/rate-limit';
 import { gptQueue } from '@/queues';
@@ -10,6 +10,7 @@ import {
 } from '@/services/conversation-service';
 import { canCreateConversation } from '@/services/usage-service';
 import { logger } from '@/utils/logger';
+import type { ExpressRequestWithAuth } from '@clerk/express';
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import { z } from 'zod';
@@ -21,14 +22,16 @@ router.use(conversationsRateLimiter);
 
 // Schema for creating a conversation
 const createConversationSchema = z.object({
-  mode: z.string(),
+  mode: z.string().min(1),
   recordingType: z.union([z.literal('separate'), z.literal('live')]),
 });
+
+// type CreateConversationBody = z.infer<typeof createConversationSchema>;
 
 // Create a new conversation
 router.post('/', requireAuth, async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.auth?.userId;
+    const userId = getUserId(req as ExpressRequestWithAuth);
     if (!userId) {
       throw new AuthenticationError('Unauthorized: No user ID found');
     }
@@ -42,7 +45,12 @@ router.post('/', requireAuth, async (req: Request, res: Response, next: NextFunc
     // Check if user can create a new conversation (usage limits)
     const usageCheck = await canCreateConversation(userId);
     if (!usageCheck.canCreate) {
-      throw new ValidationError(usageCheck.reason || 'Usage limit reached');
+      res.status(403).json({ 
+        error: 'Usage limit reached',
+        reason: usageCheck.reason,
+        status: 403
+      });
+      return;
     }
 
     const { mode, recordingType } = validationResult.data;
@@ -53,7 +61,15 @@ router.post('/', requireAuth, async (req: Request, res: Response, next: NextFunc
     });
 
     logger.debug(`Created new conversation: ${conversation.id} for user: ${userId}`);
-    res.status(201).json({ conversation });
+    res.status(201).json({ 
+      success: true,
+      conversation: {
+        id: conversation.id,
+        mode,
+        recordingType,
+        status: 'created'
+      }
+    });
   } catch (error) {
     next(error);
   }
