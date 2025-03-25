@@ -2,7 +2,7 @@ import { config } from '@/config';
 import { gptQueue } from '@/queues';
 import { getConversationAudios, updateAudioStatus } from '@/services/audio-service';
 import { getConversationById, updateConversationStatus } from '@/services/conversation-service';
-import { sendAudioNotification, sendConversationNotification } from '@/services/notification-service';
+import { sendAudioNotification, sendConversationNotification, sendStatusNotification } from '@/services/notification-service';
 import type { AudioJob } from '@/types';
 import { deleteFile } from '@/utils/file';
 import { logger } from '@/utils/logger';
@@ -34,7 +34,7 @@ const processAudio = async (job: Job<AudioJob>): Promise<void> => {
     // Update audio status to processing
     logger.debug(`Updating audio status to processing for audioId: ${audioId}`);
     await updateAudioStatus(audioId, 'processing');
-    await sendAudioNotification(userId, audioId, conversationId, 'processing');
+    await sendStatusNotification(userId, conversationId, 'processing');
     
     // Transcribe the audio
     logger.debug(`Starting transcription for audioId: ${audioId}`);
@@ -46,7 +46,7 @@ const processAudio = async (job: Job<AudioJob>): Promise<void> => {
     // Update the audio record with transcription and remove audio file path
     logger.debug(`Updating audio status to transcribed for audioId: ${audioId}`);
     await updateAudioStatus(audioId, 'transcribed', transcription);
-    await sendAudioNotification(userId, audioId, conversationId, 'transcribed');
+    await sendAudioNotification(userId, audioId.toString(), conversationId, 'transcribed');
     
     // Delete the audio file to save space only after successful transcription
     logger.debug(`Deleting audio file: ${audioPath}`);
@@ -119,7 +119,7 @@ const processAudio = async (job: Job<AudioJob>): Promise<void> => {
         undefined, 
         errorMessage
       );
-      await sendAudioNotification(userId, audioId, conversationId, 'failed');
+      await sendAudioNotification(userId, audioId.toString(), conversationId, 'failed');
       
       // Cleanup the audio file on failure
       logger.debug(`Cleaning up audio file after failure: ${audioPath}`);
