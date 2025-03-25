@@ -18,15 +18,15 @@ export const createAudioRecord = async ({
   return await transaction(async () => {
     try {
       // First verify conversation exists and belongs to user
-      const conversationExistsResult = await query<{ exists: number }>(
-        `SELECT 1 as exists 
+      const conversationExistsResult = await query<{ exists_flag: number }>(
+        `SELECT 1 as exists_flag 
          FROM conversations 
          WHERE id = ? AND userId = ? 
          LIMIT 1`,
         [conversationId, userId]
       );
       
-      const conversationExists = conversationExistsResult[0]?.exists === 1;
+      const conversationExists = conversationExistsResult[0]?.exists_flag === 1;
       
       if (!conversationExists) {
         throw new Error(`Conversation ${conversationId} not found or does not belong to user ${userId}`);
@@ -116,12 +116,12 @@ export const updateAudioStatus = async (
   await transaction(async () => {
     try {
       // First verify audio exists
-      const audioExistsResult = await query<{ exists: number }>(
-        'SELECT 1 as exists FROM audios WHERE id = ? LIMIT 1',
+      const audioExistsResult = await query<{ exists_flag: number }>(
+        'SELECT 1 as exists_flag FROM audios WHERE id = ? LIMIT 1',
         [audioId]
       );
       
-      const audioExists = audioExistsResult[0]?.exists === 1;
+      const audioExists = audioExistsResult[0]?.exists_flag === 1;
       
       if (!audioExists) {
         throw new Error(`Audio ${audioId} not found`);

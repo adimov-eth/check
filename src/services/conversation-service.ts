@@ -21,12 +21,12 @@ export const createConversation = async ({
       const id = randomUUIDv7();
       
       // First verify user exists
-      const userExistsResult = await query<{ exists: number }>(
-        'SELECT 1 as exists FROM users WHERE id = ? LIMIT 1',
+      const userExistsResult = await query<{ exists_flag: number }>(
+        'SELECT 1 as exists_flag FROM users WHERE id = ? LIMIT 1',
         [userId]
       );
       
-      const userExists = userExistsResult[0]?.exists === 1;
+      const userExists = userExistsResult[0]?.exists_flag === 1;
       
       if (!userExists) {
         throw new Error(`User ${userId} not found`);
