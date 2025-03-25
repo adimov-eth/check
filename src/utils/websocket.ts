@@ -5,7 +5,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from './logger';
 
 interface WebSocketClient extends WebSocket {
-  userId: string; 
+  userId: string;
   isAlive: boolean;
   subscribedTopics: Set<string>;
 }
@@ -13,18 +13,18 @@ interface WebSocketClient extends WebSocket {
 export class WebSocketManager {
   private wss: WebSocketServer | null = null;
   private clients = new Map<string, Set<WebSocketClient>>();
-  private pingInterval: ReturnType<typeof setInterval> | null = null;
+  private pingInterval: NodeJS.Timer | null = null;
 
   public initialize(server: Server, path = '/ws'): void {
-    this.wss = new WebSocketServer({ noServer: true }); // Changed to noServer: true
+    this.wss = new WebSocketServer({ noServer: true });
     logger.info(`WebSocket server initialized on path: ${path}`);
     this.setupConnectionHandler();
     this.startPingInterval();
   }
 
-  public handleUpgrade(req: Request, socket: Socket, head: Buffer, userId: string): void {
+  public handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer, userId: string): void {
     if (!this.wss) return;
-    this.wss.handleUpgrade(req as unknown as IncomingMessage, socket, head, (ws) => {
+    this.wss.handleUpgrade(req, socket, head, (ws) => {
       const client = ws as WebSocketClient;
       client.userId = userId;
       client.isAlive = true;
@@ -36,13 +36,15 @@ export class WebSocketManager {
   private setupConnectionHandler(): void {
     if (!this.wss) return;
     this.wss.on('connection', (ws: WebSocketClient) => {
-      const userId = ws.userId; 
+      const userId = ws.userId;
       if (!this.clients.get(userId)?.add(ws)) {
         this.clients.set(userId, new Set([ws]));
       }
       logger.info(`WebSocket client connected: ${userId}`);
 
-      ws.on('pong', () => { ws.isAlive = true; });
+      ws.on('pong', () => {
+        ws.isAlive = true;
+      });
 
       ws.on('message', (message) => {
         try {
@@ -65,10 +67,13 @@ export class WebSocketManager {
         logger.info(`WebSocket client disconnected: ${userId}`);
       });
 
-      ws.send(JSON.stringify({
-        type: 'connected',
-        payload: { message: 'Connected to WebSocket server' },
-      }));
+      ws.send(
+        JSON.stringify({
+          type: 'connected',
+          timestamp: new Date().toISOString(),
+          payload: { message: 'Connected to WebSocket server' },
+        })
+      );
     });
   }
 
@@ -80,14 +85,14 @@ export class WebSocketManager {
         client.isAlive = false;
         client.ping();
       });
-    }, 30000);
+    }, 30000); // Ping every 30 seconds
   }
 
   public sendToUser(userId: string, data: unknown): void {
     const userClients = this.clients.get(userId);
     if (!userClients) return;
     const message = JSON.stringify(data);
-    userClients.forEach(client => {
+    userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) client.send(message);
     });
   }
@@ -96,7 +101,7 @@ export class WebSocketManager {
     const userClients = this.clients.get(userId);
     if (!userClients) return;
     const message = JSON.stringify(data);
-    userClients.forEach(client => {
+    userClients.forEach((client) => {
       if (client.subscribedTopics.has(topic) && client.readyState === WebSocket.OPEN) {
         client.send(message);
       }
@@ -106,7 +111,7 @@ export class WebSocketManager {
   public broadcast(data: unknown): void {
     if (!this.wss) return;
     const message = JSON.stringify(data);
-    this.wss.clients.forEach(client => {
+    this.wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) client.send(message);
     });
   }
@@ -114,6 +119,7 @@ export class WebSocketManager {
   public shutdown(): void {
     if (this.pingInterval) clearInterval(this.pingInterval);
     this.wss?.close();
+    logger.info('WebSocket server shut down');
   }
 }
 

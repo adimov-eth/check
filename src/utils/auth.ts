@@ -1,7 +1,5 @@
 // src/utils/auth.ts
-import { config } from '@/config';
 import { logger } from '@/utils/logger';
-import type { ExpressRequestWithAuth } from '@clerk/express';
 import * as jose from 'jose';
 
 interface ClerkJWTPayload extends jose.JWTPayload {
@@ -12,29 +10,34 @@ interface ClerkJWTPayload extends jose.JWTPayload {
 
 export const verifySessionToken = async (token: string): Promise<string | null> => {
   try {
-    // Fetch Clerk's JWKS (JSON Web Key Set)
     const JWKS = jose.createRemoteJWKSet(
-      new URL('https://clerk.clerk.dev/.well-known/jwks.json')
+      new URL('https://clerk.bkk.lol/.well-known/jwks.json')
     );
 
-    // Verify the JWT
     const { payload } = await jose.jwtVerify(token, JWKS, {
-      issuer: 'https://clerk.clerk.dev',
-      audience: config.clerkSecretKey,
+      issuer: 'https://clerk.bkk.lol',
+      // No audience specified unless required by your Clerk setup
     });
 
-
     const clerkPayload = payload as ClerkJWTPayload;
-    
+
     if (!clerkPayload.sub) {
       throw new Error('Invalid token: missing sub claim');
     }
-    
-    return clerkPayload.sub;
+
+    // Log azp for debugging (optional; adjust based on your app's needs)
+    if (clerkPayload.azp) {
+      logger.debug(`Token azp claim: ${clerkPayload.azp}`);
+      // Optionally validate azp against permitted origins if applicable
+      // const permittedOrigins = ['https://your-app-domain.com'];
+      // if (!permittedOrigins.includes(clerkPayload.azp)) {
+      //   throw new Error('Invalid azp claim');
+      // }
+    }
+
+    return clerkPayload.sub; // userId
   } catch (error) {
     logger.error('Token verification failed:', { error });
     return null;
   }
 };
-
-export const getUserId = (req: ExpressRequestWithAuth): string | null => req.auth?.userId ?? null;

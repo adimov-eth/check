@@ -44,32 +44,3 @@ export const sendStatusNotification = (
   });
   logger.debug(`Sent status ${status} for conversation ${conversationId} to user ${userId}`);
 };
-
-export const sendConversationNotification = (
-  userId: string,
-  conversationId: string,
-  status: 'conversation_started' | 'conversation_completed',
-  payload?: Record<string, unknown>
-): void => {
-  const topic = `conversation:${conversationId}`;
-  websocketManager.sendToSubscribedClients(userId, topic, {
-    type: 'status',
-    timestamp: new Date().toISOString(),
-    payload: { conversationId, status, ...payload },
-  });
-  logger.debug(`Sent status ${status} for conversation ${conversationId} to user ${userId}`);
-};  
-
-export const sendAudioNotification = (
-  userId: string,
-  audioId: string,
-  conversationId: string,
-  status: 'processing' | 'transcribed' | 'failed'
-): void => {
-  const topic = `conversation:${conversationId}`;
-  websocketManager.sendToSubscribedClients(userId, topic, {
-    type: 'audio',
-    timestamp: new Date().toISOString(),
-    payload: { audioId, status },
-  });
-};  
