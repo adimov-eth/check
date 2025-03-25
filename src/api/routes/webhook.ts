@@ -1,29 +1,41 @@
+import {
+  captureRawBody,
+  validateWebhookRequest,
+  webhookBodyParser,
+  type WebhookRequest
+} from '@/middleware/webhook';
 import { handleWebhookEvent, verifyWebhookSignature } from '@/services/webhook-service';
 import type { WebhookResponse } from '@/types/webhook';
-import type { Request, Response } from 'express';
+import { logger } from '@/utils/logger';
+import type { Response } from 'express';
 import { Router } from 'express';
-
-// Extend Request type to include rawBody
-interface SvixWebhookRequest extends Request {
-  rawBody?: string;
-}
 
 const router = Router();
 
-// Middleware to capture raw body for webhook verification
-router.use((req: Request, _res: Response, next) => {
-  let data = '';
-  req.on('data', chunk => { data += chunk });
-  req.on('end', () => {
-    (req as SvixWebhookRequest).rawBody = data;
-    next();
-  });
-});
+// Apply middlewares in order
+router.use(webhookBodyParser);
+router.use(captureRawBody);
+router.use(validateWebhookRequest);
 
-router.post('/', async (req: SvixWebhookRequest, res: Response<WebhookResponse>): Promise<void> => {
+const WEBHOOK_TIMEOUT = 10000; // 10 seconds
+
+router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>): Promise<void> => {
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Webhook processing timeout')), WEBHOOK_TIMEOUT);
+  });
+
   try {
+    logger.debug('Processing webhook', {
+      headers: {
+        'svix-id': req.headers['svix-id'],
+        'svix-timestamp': req.headers['svix-timestamp'],
+        'content-type': req.headers['content-type']
+      }
+    });
+
     // Get the raw body
     const rawBody = req.rawBody || JSON.stringify(req.body);
+    logger.debug('Webhook raw body', { rawBody });
     
     // Verify the webhook signature using Svix headers
     const evt = await verifyWebhookSignature(rawBody, {
@@ -32,12 +44,18 @@ router.post('/', async (req: SvixWebhookRequest, res: Response<WebhookResponse>)
       'svix-signature': req.headers['svix-signature'] as string,
     });
     
+    logger.info('Webhook signature verified', { 
+      type: evt.type,
+      userId: evt.data?.id
+    });
+
     // Handle the webhook event
-    await handleWebhookEvent(evt);
+    await Promise.race([handleWebhookEvent(evt), timeoutPromise]);
     
+    logger.info('Webhook processed successfully');
     res.json({ success: true, message: 'Webhook processed successfully' });
   } catch (err) {
-    console.error('Webhook processing error:', err);
+    logger.error('Webhook processing error:', err);
     res.status(400).json({
       success: false,
       error: `Failed to process webhook: ${(err as Error).message}`

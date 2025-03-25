@@ -60,7 +60,7 @@ app.use('/audio', audioRoutes);
 app.use('/conversations', conversationRoutes);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/users', userRoutes);
-app.use('/webhook', webhookRoutes);
+app.use('/api', webhookRoutes);
 
 // 404 handler
 app.use((_, res) => {

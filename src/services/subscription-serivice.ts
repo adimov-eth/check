@@ -315,7 +315,13 @@ export const hasActiveSubscription = async (userId: string): Promise<{
     };
   } catch (error) {
     logger.error(`Error checking subscription status: ${error instanceof Error ? error.message : String(error)}`);
-    throw error;
+    // Return false instead of throwing to avoid breaking the app
+    return {
+      isActive: false,
+      expiresDate: null,
+      type: null,
+      subscriptionId: null
+    };
   }
 };
 
