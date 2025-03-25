@@ -1,5 +1,5 @@
 export const config = {
-    port: Number(process.env.PORT) || 3000,
+    port: Number(process.env.PORT) || 3001,
     clerkSecretKey: process.env.CLERK_SECRET_KEY || '',
     clerkWebhookSecret: process.env.CLERK_WEBHOOK_SECRET || '',
     openaiApiKey: process.env.OPENAI_API_KEY || '',
