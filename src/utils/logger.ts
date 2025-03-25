@@ -7,10 +7,21 @@ const logLevel = process.env.LOG_LEVEL || 'debug';
 
 // Custom format for better console readability
 const consoleFormat = winston.format.printf(({ level, message, timestamp, ...metadata }) => {
-  const meta = Object.keys(metadata).length ? 
-    `\n${JSON.stringify(metadata, null, 2)}` : '';
+  // Extract useful metadata
+  const { service, method, path, statusCode, duration, userId, requestId, ...rest } = metadata;
+  
+  // Format metadata for display
+  const reqInfo = method && path ? ` [${method} ${path}]` : '';
+  const status = statusCode ? ` (${statusCode})` : '';
+  const timing = duration ? ` ${duration}ms` : '';
+  const user = userId ? ` user:${userId}` : '';
+  const reqId = requestId ? ` req:${requestId}` : '';
+  
+  // Format remaining metadata
+  const meta = Object.keys(rest).length ? 
+    `\n${JSON.stringify(rest, null, 2)}` : '';
     
-  return `${timestamp} [${level.toUpperCase()}] 🔹 ${message}${meta}`;
+  return `${timestamp} [${level.toUpperCase()}] [${service}]${reqInfo}${status}${timing}${user}${reqId} 🔹 ${message}${meta}`;
 });
 
 export const logger = winston.createLogger({

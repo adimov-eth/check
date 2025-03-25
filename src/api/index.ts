@@ -39,8 +39,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// Parse JSON requests
-app.use(express.json());
+// Webhook routes first (before body parsing)
+app.use('/api', webhookRoutes);
+
+// Parse JSON requests (skip for webhook routes)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+  express.json()(req, res, next);
+});
 
 // Clerk authentication
 app.use(clerkMiddleware({
@@ -60,7 +68,6 @@ app.use('/audio', audioRoutes);
 app.use('/conversations', conversationRoutes);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/users', userRoutes);
-app.use('/api', webhookRoutes);
 
 // 404 handler
 app.use((_, res) => {
