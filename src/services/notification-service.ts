@@ -2,62 +2,45 @@
 import { logger } from '@/utils/logger';
 import { websocketManager } from '@/utils/websocket';
 
-export type NotificationType = 
-  | 'conversation_started'
-  | 'conversation_completed'
-  | 'audio_uploaded'
-  | 'subscription_updated';
-
-export const sendNotification = (
-  userId: string,
-  type: NotificationType,
-  payload: Record<string, unknown>
-): void => {
-  try {
-    websocketManager.sendToUser(userId, {
-      type,
-      timestamp: new Date().toISOString(),
-      payload
-    });
-    
-    logger.debug(`Sent notification of type ${type} to user ${userId}`);
-  } catch (error) {
-    logger.error(`Failed to send notification: ${error instanceof Error ? error.message : String(error)}`);
-  }
-};
-
-export const sendConversationNotification = (
+export const sendTranscriptNotification = (
   userId: string,
   conversationId: string,
-  type: 'conversation_started' | 'conversation_completed',
-  details?: Record<string, unknown>
+  content: string
 ): void => {
-  sendNotification(userId, type, {
-    conversationId,
-    ...details
+  const topic = `conversation:${conversationId}`;
+  websocketManager.sendToSubscribedClients(userId, topic, {
+    type: 'transcript',
+    timestamp: new Date().toISOString(),
+    payload: { conversationId, content },
   });
+  logger.debug(`Sent transcript for conversation ${conversationId} to user ${userId}`);
 };
 
-export const sendAudioNotification = (
+export const sendAnalysisNotification = (
   userId: string,
-  audioId: number,
   conversationId: string,
-  status: string
+  content: string
 ): void => {
-  sendNotification(userId, 'audio_uploaded', {
-    audioId,
-    conversationId,
-    status
+  const topic = `conversation:${conversationId}`;
+  websocketManager.sendToSubscribedClients(userId, topic, {
+    type: 'analysis',
+    timestamp: new Date().toISOString(),
+    payload: { conversationId, content },
   });
+  logger.debug(`Sent analysis for conversation ${conversationId} to user ${userId}`);
 };
 
-export const sendSubscriptionNotification = (
+export const sendStatusNotification = (
   userId: string,
-  isActive: boolean,
-  expiresDate?: number | null
+  conversationId: string,
+  status: 'processing' | 'completed' | 'error',
+  error?: string
 ): void => {
-  sendNotification(userId, 'subscription_updated', {
-    isActive,
-    expiresDate
+  const topic = `conversation:${conversationId}`;
+  websocketManager.sendToSubscribedClients(userId, topic, {
+    type: 'status',
+    timestamp: new Date().toISOString(),
+    payload: { conversationId, status, ...(error && { error }) },
   });
+  logger.debug(`Sent status ${status} for conversation ${conversationId} to user ${userId}`);
 };

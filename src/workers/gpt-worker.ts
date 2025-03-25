@@ -1,5 +1,6 @@
 import { config } from '@/config';
 import { query, queryOne } from '@/database';
+import { sendConversationNotification } from '@/services/notification-service';
 import { logger } from '@/utils/logger';
 import { generateGptResponse } from '@/utils/openai';
 import { SYSTEM_PROMPTS } from '@/utils/system-prompts';
@@ -27,7 +28,7 @@ const worker = new Worker(
   'gptProcessing',
   async (job: Job) => {
     try {
-      const { conversationId } = job.data;
+      const { conversationId, userId } = job.data;
 
       // Fetch conversation
       const conversation = await queryOne<Conversation>(
@@ -66,6 +67,9 @@ const worker = new Worker(
         'UPDATE conversations SET gptResponse = ?, status = ?, updatedAt = ? WHERE id = ?',
         [gptResponse, 'completed', Math.floor(Date.now() / 1000), conversationId]
       );
+
+      // Send completion notification
+      await sendConversationNotification(userId, conversationId, 'conversation_completed', { gptResponse });
 
     } catch (error) {
       logger.error(`GPT processing failed for job ${job.id}: ${error instanceof Error ? error.message : String(error)}`);

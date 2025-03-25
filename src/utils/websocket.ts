@@ -1,11 +1,13 @@
 // src/utils/websocket.ts
-import { Server } from 'http';
+import { IncomingMessage, Server } from 'http';
+import type { Socket } from 'net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from './logger';
 
 interface WebSocketClient extends WebSocket {
-  userId?: string;
+  userId: string; 
   isAlive: boolean;
+  subscribedTopics: Set<string>;
 }
 
 export class WebSocketManager {
@@ -14,112 +16,105 @@ export class WebSocketManager {
   private pingInterval: ReturnType<typeof setInterval> | null = null;
 
   public initialize(server: Server, path = '/ws'): void {
-    this.wss = new WebSocketServer({ server, path });
-    
+    this.wss = new WebSocketServer({ noServer: true }); // Changed to noServer: true
     logger.info(`WebSocket server initialized on path: ${path}`);
+    this.setupConnectionHandler();
+    this.startPingInterval();
+  }
 
-    this.wss.on('connection', (ws: WebSocketClient, req) => {
-      ws.isAlive = true;
-      
-      // Parse the JWT token from query params
-      const url = new URL(req.url || '', `http://${req.headers.host}`);
-      const token = url.searchParams.get('token');
-      
-      if (!token) {
-        ws.close(1008, 'Authentication required');
-        return;
+  public handleUpgrade(req: Request, socket: Socket, head: Buffer, userId: string): void {
+    if (!this.wss) return;
+    this.wss.handleUpgrade(req as unknown as IncomingMessage, socket, head, (ws) => {
+      const client = ws as WebSocketClient;
+      client.userId = userId;
+      client.isAlive = true;
+      client.subscribedTopics = new Set();
+      this.wss!.emit('connection', client, req);
+    });
+  }
+
+  private setupConnectionHandler(): void {
+    if (!this.wss) return;
+    this.wss.on('connection', (ws: WebSocketClient) => {
+      const userId = ws.userId; 
+      if (!this.clients.get(userId)?.add(ws)) {
+        this.clients.set(userId, new Set([ws]));
       }
+      logger.info(`WebSocket client connected: ${userId}`);
 
-      // In a real implementation, you'd verify the token
-      // For now, we'll just extract a user ID
-      try {
-        // Mock JWT parsing - in real app would use proper verification
-        const userId = token.split('.')[0];
-        ws.userId = userId;
-        
-        if (!this.clients.has(userId)) {
-          this.clients.set(userId, new Set());
+      ws.on('pong', () => { ws.isAlive = true; });
+
+      ws.on('message', (message) => {
+        try {
+          const data = JSON.parse(message.toString());
+          if (data.type === 'subscribe' && data.topic) {
+            ws.subscribedTopics.add(data.topic);
+            logger.debug(`Client ${userId} subscribed to ${data.topic}`);
+          } else if (data.type === 'unsubscribe' && data.topic) {
+            ws.subscribedTopics.delete(data.topic);
+            logger.debug(`Client ${userId} unsubscribed from ${data.topic}`);
+          }
+        } catch (error) {
+          logger.error(`Error processing message: ${error}`);
         }
-        this.clients.get(userId)?.add(ws);
-        
-        logger.info(`WebSocket client connected: ${userId}`);
-      } catch (error) {
-        logger.error(`WebSocket client connection error: ${error}`);
-        ws.close(1008, 'Authentication failed');
-        return;
-      }
-
-      ws.on('pong', () => {
-        ws.isAlive = true;
       });
 
       ws.on('close', () => {
-        if (ws.userId) {
-          this.clients.get(ws.userId)?.delete(ws);
-          if (this.clients.get(ws.userId)?.size === 0) {
-            this.clients.delete(ws.userId);
-          }
-        }
+        this.clients.get(userId)?.delete(ws);
+        if (this.clients.get(userId)?.size === 0) this.clients.delete(userId);
+        logger.info(`WebSocket client disconnected: ${userId}`);
       });
 
-      // Send welcome message
       ws.send(JSON.stringify({
         type: 'connected',
-        payload: { message: 'Connected to WebSocket server' }
+        payload: { message: 'Connected to WebSocket server' },
       }));
     });
+  }
 
-    // Start ping interval
+  private startPingInterval(): void {
     this.pingInterval = setInterval(() => {
       this.wss?.clients.forEach((ws) => {
         const client = ws as WebSocketClient;
-        if (client.isAlive === false) {
-          return client.terminate();
-        }
-        
+        if (!client.isAlive) return client.terminate();
         client.isAlive = false;
         client.ping();
       });
-    }, 30000); // 30 seconds
+    }, 30000);
   }
 
   public sendToUser(userId: string, data: unknown): void {
-    if (!this.wss) return;
-    
     const userClients = this.clients.get(userId);
-    if (!userClients || userClients.size === 0) return;
-    
+    if (!userClients) return;
     const message = JSON.stringify(data);
-    
     userClients.forEach(client => {
-      client.send(message);
+      if (client.readyState === WebSocket.OPEN) client.send(message);
     });
   }
 
-  public broadcast(data: unknown): void {
-    if (!this.wss) return;
-    
+  public sendToSubscribedClients(userId: string, topic: string, data: unknown): void {
+    const userClients = this.clients.get(userId);
+    if (!userClients) return;
     const message = JSON.stringify(data);
-    
-    this.wss.clients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
+    userClients.forEach(client => {
+      if (client.subscribedTopics.has(topic) && client.readyState === WebSocket.OPEN) {
         client.send(message);
       }
     });
   }
 
+  public broadcast(data: unknown): void {
+    if (!this.wss) return;
+    const message = JSON.stringify(data);
+    this.wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) client.send(message);
+    });
+  }
+
   public shutdown(): void {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
-    
-    if (this.wss) {
-      this.wss.close();
-      this.wss = null;
-    }
+    if (this.pingInterval) clearInterval(this.pingInterval);
+    this.wss?.close();
   }
 }
 
-// Create singleton instance
 export const websocketManager = new WebSocketManager();

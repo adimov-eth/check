@@ -2,23 +2,52 @@
 import { app } from '@/api';
 import { config } from '@/config';
 import { initSchema } from '@/database/schema';
+import { verifySessionToken } from '@/utils/auth';
 import { logger } from '@/utils/logger';
 import { websocketManager } from '@/utils/websocket';
 import { createServer } from 'http';
+import type { Socket } from 'net';
 
-// Initialize database schema
 initSchema();
 
-// Create HTTP server instance
 const server = createServer(app);
-
-// Initialize WebSocket server
 websocketManager.initialize(server);
 
-// Start the server
+server.on('upgrade', async (req, socket, head) => {
+  const url = new URL(req.url || '', `http://${req.headers.host}`);
+  if (url.pathname !== '/ws') {
+    socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  const token = url.searchParams.get('token');
+  if (!token) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  try {
+    const userId = await verifySessionToken(token);
+    if (!userId) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+
+    websocketManager.handleUpgrade(req as unknown as Request, socket as unknown as Socket , head, userId);
+  } catch (error) {
+    logger.error(`WebSocket upgrade error: ${error}`);
+    socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+    socket.destroy();
+  }
+});
+
 server.listen(config.port, () => {
   logger.info(`Server running on port ${config.port} in ${config.nodeEnv} mode`);
 });
+
 
 // Handle graceful shutdown
 const gracefulShutdown = async (): Promise<void> => {
