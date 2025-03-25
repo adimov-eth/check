@@ -2,13 +2,23 @@
 import winston from 'winston';
 
 const environment = process.env.NODE_ENV || 'development';
-const logLevel = process.env.LOG_LEVEL || (environment === 'production' ? 'info' : 'debug');
+// Force debug level for better visibility
+const logLevel = process.env.LOG_LEVEL || 'debug';
+
+// Custom format for better console readability
+const consoleFormat = winston.format.printf(({ level, message, timestamp, ...metadata }) => {
+  const meta = Object.keys(metadata).length ? 
+    `\n${JSON.stringify(metadata, null, 2)}` : '';
+    
+  return `${timestamp} [${level.toUpperCase()}] 🔹 ${message}${meta}`;
+});
 
 export const logger = winston.createLogger({
   level: logLevel,
   format: winston.format.combine(
-    winston.format.timestamp(),
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
     winston.format.errors({ stack: true }),
+    winston.format.splat(),
     winston.format.json()
   ),
   defaultMeta: { service: 'api-service' },
@@ -16,12 +26,11 @@ export const logger = winston.createLogger({
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.printf(({ timestamp, level, message, stack, ...meta }) => {
-          const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-          const stackStr = stack ? `\n${stack}` : '';
-          return `${timestamp} [${level}]: ${message}${metaStr}${stackStr}`;
-        })
-      )
+        winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+        consoleFormat
+      ),
+      // Force logging to console
+      level: 'debug'
     })
   ]
 });
@@ -40,10 +49,17 @@ if (environment === 'production') {
   }));
 }
 
-// For convenience, provide commonly used log levels as methods
+// Enhanced logging utility with type support and metadata
 export const log = {
-  debug: (message: string, meta = {}) => logger.debug(message, meta),
-  info: (message: string, meta = {}) => logger.info(message, meta),
-  warn: (message: string, meta = {}) => logger.warn(message, meta),
-  error: (message: string, meta = {}) => logger.error(message, meta),
+  debug: (message: string, meta: Record<string, unknown> = {}) => 
+    logger.debug(message, { ...meta, timestamp: new Date().toISOString() }),
+  info: (message: string, meta: Record<string, unknown> = {}) => 
+    logger.info(message, { ...meta, timestamp: new Date().toISOString() }),
+  warn: (message: string, meta: Record<string, unknown> = {}) => 
+    logger.warn(message, { ...meta, timestamp: new Date().toISOString() }),
+  error: (message: string, meta: Record<string, unknown> = {}) => 
+    logger.error(message, { ...meta, timestamp: new Date().toISOString() }),
 };
+
+// Add test log to verify logger is working
+logger.debug('Logger initialized with level: ' + logLevel);

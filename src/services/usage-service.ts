@@ -4,25 +4,32 @@ import { hasActiveSubscription } from '@/services/subscription-serivice';
 import { logger } from '@/utils/logger';
 
 /**
- * Get the start date of the current month (UTC)
+ * Get the start date of the current week (UTC)
  */
-const getCurrentMonthStart = (): number => {
+const getCurrentWeekStart = (): number => {
   const now = new Date();
-  const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  return Math.floor(startOfMonth.getTime() / 1000);
+  // Get the day of the week (0-6, where 0 is Sunday)
+  const dayOfWeek = now.getUTCDay();
+  // Subtract days to get to the start of the week (Sunday)
+  const startOfWeek = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() - dayOfWeek
+  ));
+  return Math.floor(startOfWeek.getTime() / 1000);
 };
 
 /**
- * Count conversations created by a user in the current month
+ * Count conversations created by a user in the current week
  */
-export const countUserConversationsThisMonth = async (userId: string): Promise<number> => {
-  const monthStart = getCurrentMonthStart();
+export const countUserConversationsThisWeek = async (userId: string): Promise<number> => {
+  const weekStart = getCurrentWeekStart();
   
   const result = await query<{ count: number }>(
     `SELECT COUNT(*) as count
      FROM conversations
      WHERE userId = ? AND createdAt >= ?`,
-    [userId, monthStart]
+    [userId, weekStart]
   );
   
   return result[0]?.count || 0;
@@ -53,14 +60,14 @@ export const canCreateConversation = async (userId: string): Promise<{
     }
     
     // For free tier users, check current usage
-    const conversationCount = await countUserConversationsThisMonth(userId);
-    const canCreate = conversationCount < config.freeTier.monthlyConversationLimit;
+    const conversationCount = await countUserConversationsThisWeek(userId);
+    const canCreate = conversationCount < config.freeTier.weeklyConversationLimit;
     
     return {
       canCreate,
-      reason: canCreate ? undefined : 'Monthly conversation limit reached',
+      reason: canCreate ? undefined : 'Weekly conversation limit reached',
       currentUsage: conversationCount,
-      limit: config.freeTier.monthlyConversationLimit,
+      limit: config.freeTier.weeklyConversationLimit,
       isSubscribed: false
     };
   } catch (error) {
@@ -71,10 +78,24 @@ export const canCreateConversation = async (userId: string): Promise<{
       canCreate: true,
       reason: 'Error checking limits',
       currentUsage: 0,
-      limit: config.freeTier.monthlyConversationLimit,
+      limit: config.freeTier.weeklyConversationLimit,
       isSubscribed: false
     };
   }
+};
+
+/**
+ * Calculate next reset date (start of next week)
+ */
+const getNextResetDate = (): number => {
+  const now = new Date();
+  const daysUntilNextWeek = 7 - now.getUTCDay();
+  const resetDate = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + daysUntilNextWeek
+  ));
+  return Math.floor(resetDate.getTime() / 1000);
 };
 
 /**
@@ -89,32 +110,29 @@ export const getUserUsageStats = async (userId: string): Promise<{
 }> => {
   try {
     const subscriptionStatus = await hasActiveSubscription(userId);
+    const nextResetDate = getNextResetDate();
     
-    // For subscribers, return unlimited usage info
+    // For subscribers, return unlimited usage info but with next reset date
     if (subscriptionStatus.isActive) {
       return {
         currentUsage: 0,
         limit: -1, // Unlimited
         isSubscribed: true,
         remainingConversations: -1, // Unlimited
-        resetDate: 0 // Not applicable
+        resetDate: nextResetDate // Show next week's reset date even for subscribers
       };
     }
     
     // For free tier users, calculate remaining conversations
-    const conversationCount = await countUserConversationsThisMonth(userId);
-    const remainingConversations = Math.max(0, config.freeTier.monthlyConversationLimit - conversationCount);
-    
-    // Calculate next reset date (1st of next month)
-    const now = new Date();
-    const resetDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const conversationCount = await countUserConversationsThisWeek(userId);
+    const remainingConversations = Math.max(0, config.freeTier.weeklyConversationLimit - conversationCount);
     
     return {
       currentUsage: conversationCount,
-      limit: config.freeTier.monthlyConversationLimit,
+      limit: config.freeTier.weeklyConversationLimit,
       isSubscribed: false,
       remainingConversations,
-      resetDate: Math.floor(resetDate.getTime() / 1000)
+      resetDate: nextResetDate
     };
   } catch (error) {
     logger.error(`Error getting user usage stats: ${error instanceof Error ? error.message : String(error)}`);
