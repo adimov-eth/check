@@ -1,15 +1,17 @@
 // src/api/index.ts
 import { config } from '@/config';
+import { getUserId } from '@/middleware/auth'; // Import getUserId
+import { ensureUser } from '@/middleware/ensure-user';
+import { AuthenticationError, handleError } from '@/middleware/error'; // Import AuthenticationError
+import { apiRateLimiter } from '@/middleware/rate-limit';
+import { getUserUsageStats } from '@/services/usage-service'; // Import getUserUsageStats
 import { logger } from '@/utils/logger';
+import type { ExpressRequestWithAuth } from '@clerk/express';
 import { clerkMiddleware } from '@clerk/express';
 import cors from 'cors';
+import type { NextFunction, Request, Response } from 'express';
 import express from 'express';
 import helmet from 'helmet';
-
-import { ensureUser } from '@/middleware/ensure-user';
-import { handleError } from '@/middleware/error';
-import { apiRateLimiter } from '@/middleware/rate-limit';
-
 import audioRoutes from './routes/audio';
 import conversationRoutes from './routes/conversation';
 import subscriptionRoutes from './routes/subscription';
@@ -72,6 +74,21 @@ app.use('/audio', audioRoutes);
 app.use('/conversations', conversationRoutes);
 app.use('/subscriptions', subscriptionRoutes);
 app.use('/users', userRoutes);
+
+// Usage stats endpoint
+app.get('/usage/stats', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = getUserId(req as ExpressRequestWithAuth);
+    if (!userId) {
+      throw new AuthenticationError('Unauthorized: No user ID found');
+    }
+    
+    const usageStats = await getUserUsageStats(userId);
+    res.json(usageStats);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // 404 handler
 app.use((_, res) => {
