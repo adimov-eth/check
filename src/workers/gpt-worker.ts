@@ -1,6 +1,6 @@
 import { config } from '@/config';
 import { query, queryOne } from '@/database';
-import { sendConversationNotification } from '@/services/notification-service';
+import { sendConversationNotification, sendStatusNotification } from '@/services/notification-service';
 import { logger } from '@/utils/logger';
 import { generateGptResponse } from '@/utils/openai';
 import { SYSTEM_PROMPTS } from '@/utils/system-prompts';
@@ -27,8 +27,11 @@ const createPrompt = (
 const worker = new Worker(
   'gptProcessing',
   async (job: Job) => {
+    const { conversationId, userId } = job.data;
+    
     try {
-      const { conversationId, userId } = job.data;
+      // Notify processing started
+      await sendStatusNotification(userId, conversationId, 'processing');
 
       // Fetch conversation
       const conversation = await queryOne<Conversation>(
@@ -68,12 +71,15 @@ const worker = new Worker(
         [gptResponse, 'completed', Math.floor(Date.now() / 1000), conversationId]
       );
 
-      // Send completion notification
+      // Send completion notifications
+      await sendStatusNotification(userId, conversationId, 'completed');
       await sendConversationNotification(userId, conversationId, 'conversation_completed', { gptResponse });
 
     } catch (error) {
       logger.error(`GPT processing failed for job ${job.id}: ${error instanceof Error ? error.message : String(error)}`);
-      throw error; // Re-throw to mark job as failed
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await sendStatusNotification(userId, conversationId, 'error', errorMessage);
+      throw error;
     }
   },
   { connection: config.redis, concurrency: 3 }

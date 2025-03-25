@@ -98,6 +98,7 @@ export class WebSocketManager {
   }
 
   public sendToSubscribedClients(userId: string, topic: string, data: unknown): void {
+    console.log('sendToSubscribedClients', userId, topic, data);
     const userClients = this.clients.get(userId);
     if (!userClients) return;
     const message = JSON.stringify(data);
