@@ -18,11 +18,11 @@ router.use(webhookBodyParser);
 router.use(captureRawBody);
 router.use(validateWebhookRequest);
 
-const WEBHOOK_TIMEOUT = 30000; // Increased to 30 seconds
+const WEBHOOK_TIMEOUT = 5000; // Reduced to 5 seconds since we're only verifying signature
 
 router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>): Promise<void> => {
   const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error('Webhook processing timeout')), WEBHOOK_TIMEOUT);
+    setTimeout(() => reject(new Error('Webhook signature verification timeout')), WEBHOOK_TIMEOUT);
   });
 
   try {
@@ -45,7 +45,7 @@ router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>
       contentType: req.headers['content-type']
     });
     
-    // Verify the webhook signature using Svix headers
+    // Only verify the signature before responding
     const evt = await Promise.race<WebhookEvent>([
       verifyWebhookSignature(rawBody, {
         'svix-id': req.headers['svix-id'] as string,
@@ -55,31 +55,41 @@ router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>
       timeoutPromise
     ]);
     
-    logger.info('Webhook signature verified', { 
-      type: evt.type,
-      userId: evt.data?.id,
-      eventId: req.headers['svix-id']
-    });
-
-    // Send immediate acknowledgment to Clerk
+    // Send immediate acknowledgment to Clerk after signature verification
     res.status(202).json({ 
       success: true, 
       message: 'Webhook received and signature verified' 
     });
 
-    // Handle the webhook event asynchronously
-    handleWebhookEvent(evt).catch(err => {
-      logger.error('Async webhook processing error:', {
-        error: err.message,
-        type: evt.type,
-        userId: evt.data?.id,
-        eventId: req.headers['svix-id']
-      });
+    // Log successful verification
+    logger.info('Webhook signature verified, processing asynchronously', { 
+      type: evt.type,
+      userId: evt.data?.id,
+      eventId: req.headers['svix-id']
+    });
+
+    // Process the webhook event asynchronously
+    setImmediate(async () => {
+      try {
+        await handleWebhookEvent(evt);
+        logger.info('Webhook processed successfully', {
+          type: evt.type,
+          userId: evt.data?.id,
+          eventId: req.headers['svix-id']
+        });
+      } catch (err) {
+        logger.error('Async webhook processing error:', {
+          error: (err as Error).message,
+          type: evt.type,
+          userId: evt.data?.id,
+          eventId: req.headers['svix-id']
+        });
+      }
     });
 
   } catch (err) {
     const error = err as Error;
-    logger.error('Webhook processing error:', {
+    logger.error('Webhook signature verification error:', {
       error: error.message,
       stack: error.stack,
       headers: req.headers
@@ -87,7 +97,7 @@ router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>
     
     res.status(400).json({
       success: false,
-      error: `Failed to process webhook: ${error.message}`
+      error: `Failed to verify webhook signature: ${error.message}`
     });
   }
 });
