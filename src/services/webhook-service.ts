@@ -1,3 +1,4 @@
+import { userCache } from '@/services/user-cache-service';
 import { deleteUser, upsertUser } from '@/services/user-service';
 import type { WebhookEventType } from '@/types/webhook';
 import { logger } from '@/utils/logger';
@@ -97,6 +98,10 @@ export const handleWebhookEvent = async (event: WebhookEvent): Promise<void> => 
           email: primaryEmail,
           name: userData.first_name || undefined,
         });
+        
+        // Update cache after successful upsert
+        userCache.set(userData.id, true);
+        
         logger.info(`User ${eventType} processed successfully`, { 
           userId: userData.id,
           email: primaryEmail
@@ -114,6 +119,8 @@ export const handleWebhookEvent = async (event: WebhookEvent): Promise<void> => 
       const userData = data as UserJSON;
       try {
         await deleteUser(userData.id);
+        // Remove from cache after successful deletion
+        userCache.set(userData.id, false);
         logger.info('User deleted successfully', { userId: userData.id });
       } catch (error) {
         logger.error('Failed to delete user', {

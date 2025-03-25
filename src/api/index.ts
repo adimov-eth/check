@@ -6,6 +6,7 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 
+import { ensureUser } from '@/middleware/ensure-user';
 import { handleError } from '@/middleware/error';
 import { apiRateLimiter } from '@/middleware/rate-limit';
 
@@ -54,6 +55,9 @@ app.use((req, res, next) => {
 app.use(clerkMiddleware({
   secretKey: config.clerkSecretKey
 }));
+
+// Ensure user exists in database
+app.use(ensureUser);
 
 // Default rate limiter
 app.use(apiRateLimiter);
