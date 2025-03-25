@@ -10,6 +10,12 @@ if (!WEBHOOK_SECRET) {
   throw new Error('Missing CLERK_WEBHOOK_SECRET environment variable');
 }
 
+// Log webhook secret prefix to help debug production vs development credentials
+logger.info('Webhook configuration initialized', {
+  webhookSecretPrefix: WEBHOOK_SECRET.startsWith('whsec_test_') ? 'test' : 'live',
+  environment: process.env.NODE_ENV
+});
+
 export const verifyWebhookSignature = async (
   payload: string,
   headers: {
@@ -20,10 +26,13 @@ export const verifyWebhookSignature = async (
 ): Promise<WebhookEvent> => {
   logger.debug('Verifying webhook signature', { 
     hasPayload: !!payload,
+    payloadLength: payload.length,
     headers: {
       hasId: !!headers['svix-id'],
       hasTimestamp: !!headers['svix-timestamp'],
-      hasSignature: !!headers['svix-signature']
+      hasSignature: !!headers['svix-signature'],
+      signaturePrefix: headers['svix-signature']?.substring(0, 10) + '...',
+      timestamp: headers['svix-timestamp']
     }
   });
 
@@ -40,12 +49,21 @@ export const verifyWebhookSignature = async (
       'svix-signature': headers['svix-signature'],
     }) as WebhookEvent;
     
-    logger.debug('Webhook signature verified successfully');
+    logger.debug('Webhook signature verified successfully', {
+      eventType: evt.type,
+      eventId: headers['svix-id'],
+      timestamp: new Date(Number(headers['svix-timestamp']) * 1000).toISOString()
+    });
     return evt;
   } catch (err) {
     logger.error('Failed to verify webhook signature', { 
       error: (err as Error).message,
-      payload: payload.substring(0, 100) + '...' // Log first 100 chars for debugging
+      payload: payload.substring(0, 100) + '...', // Log first 100 chars for debugging
+      headers: {
+        id: headers['svix-id'],
+        timestamp: headers['svix-timestamp'],
+        signaturePrefix: headers['svix-signature']?.substring(0, 10) + '...'
+      }
     });
     throw new Error(`Failed to verify webhook signature: ${(err as Error).message}`);
   }

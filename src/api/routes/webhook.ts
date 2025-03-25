@@ -1,5 +1,4 @@
 import {
-  captureRawBody,
   validateWebhookRequest,
   webhookBodyParser,
   type WebhookRequest
@@ -15,10 +14,9 @@ const router = Router();
 
 // Apply middlewares in order
 router.use(webhookBodyParser);
-router.use(captureRawBody);
-router.use(validateWebhookRequest);
+router.use(validateWebhookRequest); // captureRawBody removed
 
-const WEBHOOK_TIMEOUT = 5000; // Reduced to 5 seconds since we're only verifying signature
+const WEBHOOK_TIMEOUT = 5000;
 
 router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>): Promise<void> => {
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -26,7 +24,6 @@ router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>
   });
 
   try {
-    // Log the incoming webhook request
     logger.info('Received Clerk webhook', {
       method: req.method,
       path: req.path,
@@ -37,15 +34,22 @@ router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>
       }
     });
 
-    // Get the raw body and log its presence
-    const rawBody = req.rawBody || JSON.stringify(req.body);
+    logger.debug('Request body type', { 
+      isBuffer: Buffer.isBuffer(req.body),
+      bodyType: typeof req.body,
+      bodyLength: req.body ? (req.body as Buffer).length : 0
+    });
+
+    // Use req.body directly from webhookBodyParser
+    if (!Buffer.isBuffer(req.body)) {
+      throw new Error('Request body is not a Buffer');
+    }
+    const rawBody = req.body.toString('utf8');
     logger.debug('Processing webhook payload', { 
-      hasRawBody: !!req.rawBody,
       bodyLength: rawBody.length,
       contentType: req.headers['content-type']
     });
     
-    // Only verify the signature before responding
     const evt = await Promise.race<WebhookEvent>([
       verifyWebhookSignature(rawBody, {
         'svix-id': req.headers['svix-id'] as string,
@@ -55,20 +59,17 @@ router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>
       timeoutPromise
     ]);
     
-    // Send immediate acknowledgment to Clerk after signature verification
     res.status(202).json({ 
       success: true, 
       message: 'Webhook received and signature verified' 
     });
 
-    // Log successful verification
     logger.info('Webhook signature verified, processing asynchronously', { 
       type: evt.type,
       userId: evt.data?.id,
       eventId: req.headers['svix-id']
     });
 
-    // Process the webhook event asynchronously
     setImmediate(async () => {
       try {
         await handleWebhookEvent(evt);
@@ -102,4 +103,4 @@ router.post('/clerk', async (req: WebhookRequest, res: Response<WebhookResponse>
   }
 });
 
-export default router; 
+export default router;
