@@ -53,13 +53,30 @@ app.use((req, res, next) => {
   express.json()(req, res, next);
 });
 
-// Clerk authentication
-app.use(clerkMiddleware({
+// Clerk authentication - only apply to routes that need authentication
+// The webhook route should be excluded as it doesn't have authentication
+app.use('/audio', clerkMiddleware({
+  secretKey: config.clerkSecretKey
+}));
+app.use('/conversations', clerkMiddleware({
+  secretKey: config.clerkSecretKey
+}));
+app.use('/subscriptions', clerkMiddleware({
+  secretKey: config.clerkSecretKey
+}));
+app.use('/users', clerkMiddleware({
+  secretKey: config.clerkSecretKey
+}));
+app.use('/usage', clerkMiddleware({
   secretKey: config.clerkSecretKey
 }));
 
-// Ensure user exists in database
-app.use(ensureUser);
+// Ensure user exists in database - apply to the same routes
+app.use('/audio', ensureUser);
+app.use('/conversations', ensureUser);
+app.use('/subscriptions', ensureUser);
+app.use('/users', ensureUser);
+app.use('/usage', ensureUser);
 
 // Default rate limiter
 app.use(apiRateLimiter);

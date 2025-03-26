@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import { mkdir, unlink, writeFile } from 'fs/promises';
-import { basename, dirname, join, normalize, relative } from 'path';
+import { basename, join, normalize, relative } from 'path';
 import { config } from '../config';
 import { logger } from './logger';
 
@@ -55,13 +55,30 @@ export const saveFile = async (
     }
     
     // Ensure directory exists
-    await mkdir(dirname(filePath), { recursive: true });
+    try {
+      await mkdir(config.uploadsDir, { recursive: true });
+      logger.debug(`Uploads directory ensured: ${config.uploadsDir}`);
+    } catch (dirError) {
+      logger.error(`Failed to create uploads directory: ${dirError instanceof Error ? dirError.message : String(dirError)}`);
+      throw dirError;
+    }
     
     // Write file
-    await writeFile(filePath, fileData);
-    
-    logger.debug(`File saved: ${filePath}`);
-    return filePath;
+    try {
+      await writeFile(filePath, fileData);
+      
+      // Verify file exists after writing
+      const stats = fs.statSync(filePath);
+      if (stats.size !== fileData.length) {
+        throw new Error(`File size mismatch after writing. Expected: ${fileData.length}, Got: ${stats.size}`);
+      }
+      
+      logger.debug(`File saved successfully: ${filePath} (${stats.size} bytes)`);
+      return filePath;
+    } catch (writeError) {
+      logger.error(`Failed to write file: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
+      throw writeError;
+    }
   } catch (error) {
     logger.error(`Failed to save file: ${error instanceof Error ? error.message : String(error)}`);
     throw error;

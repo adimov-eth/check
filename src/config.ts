@@ -1,3 +1,5 @@
+import { join } from 'path';
+
 export const config = {
     port: Number(process.env.PORT) || 3001,
     clerkSecretKey: process.env.CLERK_SECRET_KEY || '',
@@ -13,7 +15,7 @@ export const config = {
     },
     
     // File upload configuration
-    uploadsDir: './uploads',
+    uploadsDir: join(process.cwd(), 'uploads'),
     
     // Rate limiting configuration
     rateLimit: {

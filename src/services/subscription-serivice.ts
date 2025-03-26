@@ -200,6 +200,25 @@ export const saveSubscription = async (
     try {
       const now = Math.floor(Date.now() / 1000);
       
+      // Check if user exists, if not create a minimal record
+      const userResult = await query<{ exists: number }>(
+        `SELECT 1 as exists FROM users WHERE id = ? LIMIT 1`,
+        [userId]
+      );
+      
+      if (!userResult[0]) {
+        logger.warn(`User ${userId} not found in database when saving subscription - creating minimal record`);
+        
+        // Create a minimal user record with a temporary email
+        const tempEmail = `${userId}@temporary.vibecheck.app`;
+        await run(
+          'INSERT INTO users (id, email) VALUES (?, ?)',
+          [userId, tempEmail]
+        );
+        
+        logger.info(`Created minimal user record for ${userId} during subscription processing`);
+      }
+      
       // Check if transaction already exists
       if (verificationResult.transactionId) {
         const existingSubscriptions = await query<Subscription>(

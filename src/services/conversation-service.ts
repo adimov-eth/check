@@ -20,7 +20,9 @@ export const createConversation = async ({
     try {
       const id = randomUUIDv7();
       
-      // First verify user exists
+      // Get user or create if doesn't exist from Clerk
+      // If this is being called, we've already passed auth middleware,
+      // so we know the user exists in Clerk
       const userExistsResult = await query<{ exists_flag: number }>(
         'SELECT 1 as exists_flag FROM users WHERE id = ? LIMIT 1',
         [userId]
@@ -29,7 +31,24 @@ export const createConversation = async ({
       const userExists = userExistsResult[0]?.exists_flag === 1;
       
       if (!userExists) {
-        throw new Error(`User ${userId} not found`);
+        // Create a basic user record with the information we have
+        try {
+          logger.warn(`User ${userId} not found in database but exists in Clerk auth. Creating minimal record.`);
+          
+          // Since email is required, let's use a temporary one based on userId
+          // Later the Clerk webhook or auth middleware will update with the real email
+          const tempEmail = `${userId}@temporary.vibecheck.app`;
+          
+          await run(
+            'INSERT INTO users (id, email) VALUES (?, ?)',
+            [userId, tempEmail]
+          );
+          
+          logger.info(`Created minimal user record for ${userId} with temporary email`);
+        } catch (error) {
+          logger.error(`Failed to create user record: ${error instanceof Error ? error.message : String(error)}`);
+          throw new Error(`Failed to create user record for ${userId}`);
+        }
       }
       
       const conversations = await query<Conversation>(

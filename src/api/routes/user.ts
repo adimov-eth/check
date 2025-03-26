@@ -1,32 +1,70 @@
-import { getUserId } from '@/middleware/auth'
-import { AuthenticationError, NotFoundError } from '@/middleware/error'
-import { getUserUsageStats } from '@/services/usage-service'
-import { getUser } from '@/services/user-service'
-import { logger } from '@/utils/logger'
-import type { ExpressRequestWithAuth } from '@clerk/express'
-import type { NextFunction, Request, Response } from 'express'
-import { Router } from 'express'
+import { authenticate } from '@/middleware/auth';
+import { NotFoundError } from '@/middleware/error';
+import { getUserUsageStats } from '@/services/usage-service';
+import { getUser, upsertUser } from '@/services/user-service';
+import { logger } from '@/utils/logger';
+import { asyncHandler } from '@/utils/async-handler';
+import { formatError } from '@/utils/error-formatter';
+import type { AuthenticatedRequest, RequestHandler } from '@/types/common';
+import type { ExpressRequestWithAuth } from '@clerk/express';
+import { Router } from 'express';
 
-const router = Router()
+const router = Router();
 
-router.get('/me', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+/**
+ * Get current user data with usage stats
+ */
+const getCurrentUser: RequestHandler = async (req, res) => {
+  const { userId } = req as AuthenticatedRequest;
+  
   try {
-    const userId = getUserId(req as ExpressRequestWithAuth)
-    if (!userId) {
-      throw new AuthenticationError('Unauthorized: No user ID found')
-    }
-    
+    // Get user info and usage stats
     const [user, usageStats] = await Promise.all([
       getUser(userId),
       getUserUsageStats(userId)
-    ])
+    ]);
 
     if (!user) {
-      throw new NotFoundError(`User not found: ${userId}`)
+      // User exists in Clerk but not in our database
+      // This shouldn't happen with proper middleware, but let's be defensive
+      logger.warn(`User ${userId} found in auth but not in database - creating minimal record`);
+      
+      // Create a minimal user record using auth data
+      const auth = (req as ExpressRequestWithAuth).auth;
+      if (auth?.sessionClaims?.email) {
+        const result = await upsertUser({
+          id: userId,
+          email: auth.sessionClaims.email as string,
+          name: auth.sessionClaims.name as string
+        });
+        
+        if (result.success) {
+          // Retry getting the user
+          const createdUser = await getUser(userId);
+          if (createdUser) {
+            logger.info(`Successfully created and retrieved user ${userId}`);
+            return res.json({
+              ...createdUser,
+              usage: {
+                currentUsage: usageStats.currentUsage,
+                limit: usageStats.limit,
+                isSubscribed: usageStats.isSubscribed,
+                remainingConversations: usageStats.remainingConversations,
+                resetDate: usageStats.resetDate
+              }
+            });
+          }
+        } else {
+          logger.error(`Failed to create user: ${formatError(result.error)}`);
+        }
+      }
+      
+      // If we couldn't create the user with proper email, fall back to error
+      throw new NotFoundError(`User not found: ${userId}`);
     }
     
-    logger.debug(`User data retrieved successfully: ${userId}`)
-    res.json({
+    logger.debug(`User data retrieved successfully: ${userId}`);
+    return res.json({
       ...user,
       usage: {
         currentUsage: usageStats.currentUsage,
@@ -35,10 +73,14 @@ router.get('/me', async (req: Request, res: Response, next: NextFunction): Promi
         remainingConversations: usageStats.remainingConversations,
         resetDate: usageStats.resetDate
       }
-    })
+    });
   } catch (error) {
-    next(error) // Pass to error handler middleware
+    logger.error(`Error retrieving user data: ${formatError(error)}`);
+    throw error;
   }
-})
+};
 
-export default router
+// Define routes with middleware
+router.get('/me', authenticate, asyncHandler(getCurrentUser));
+
+export default router;

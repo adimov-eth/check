@@ -23,16 +23,34 @@ const getCurrentWeekStart = (): number => {
  * Count conversations created by a user in the current week
  */
 export const countUserConversationsThisWeek = async (userId: string): Promise<number> => {
-  const weekStart = getCurrentWeekStart();
-  
-  const result = await query<{ count: number }>(
-    `SELECT COUNT(*) as count
-     FROM conversations
-     WHERE userId = ? AND createdAt >= ?`,
-    [userId, weekStart]
-  );
-  
-  return result[0]?.count || 0;
+  try {
+    const weekStart = getCurrentWeekStart();
+    
+    // First check if the user exists
+    const userResult = await query<{ user_exists: number }>(
+      `SELECT 1 as user_exists FROM users WHERE id = ? LIMIT 1`,
+      [userId]
+    );
+    
+    // If user doesn't exist in our database, they have 0 conversations
+    if (!userResult[0] || !userResult[0].user_exists) {
+      logger.warn(`Attempted to count conversations for non-existent user: ${userId}`);
+      return 0;
+    }
+    
+    const result = await query<{ count: number }>(
+      `SELECT COUNT(*) as count
+      FROM conversations
+      WHERE userId = ? AND createdAt >= ?`,
+      [userId, weekStart]
+    );
+    
+    return result[0]?.count || 0;
+  } catch (error) {
+    logger.error(`Error counting user conversations: ${error instanceof Error ? error.message : String(error)}`);
+    // Fall back to 0 to prevent usage tracking errors from blocking user actions
+    return 0;
+  }
 };
 
 /**
