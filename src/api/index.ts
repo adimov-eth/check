@@ -1,10 +1,10 @@
 // src/api/index.ts
 import { config } from '@/config';
-import { getUserId } from '@/middleware/auth'; // Import getUserId
+import { getUserId } from '@/middleware/auth';
 import { ensureUser } from '@/middleware/ensure-user';
-import { AuthenticationError, handleError } from '@/middleware/error'; // Import AuthenticationError
+import { AuthenticationError, handleError } from '@/middleware/error';
 import { apiRateLimiter } from '@/middleware/rate-limit';
-import { getUserUsageStats } from '@/services/usage-service'; // Import getUserUsageStats
+import { getUserUsageStats } from '@/services/usage-service';
 import { logger } from '@/utils/logger';
 import type { ExpressRequestWithAuth } from '@clerk/express';
 import { clerkMiddleware } from '@clerk/express';
@@ -54,7 +54,6 @@ app.use((req, res, next) => {
 });
 
 // Clerk authentication - only apply to routes that need authentication
-// The webhook route should be excluded as it doesn't have authentication
 app.use('/audio', clerkMiddleware({
   secretKey: config.clerkSecretKey
 }));
@@ -101,7 +100,7 @@ app.get('/usage/stats', async (req: Request, res: Response, next: NextFunction) 
     }
     
     const usageStats = await getUserUsageStats(userId);
-    res.json(usageStats);
+    res.json({ usage: usageStats }); // Updated to wrap usageStats in { usage: ... }
   } catch (error) {
     next(error);
   }
