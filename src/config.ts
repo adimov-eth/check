@@ -1,5 +1,6 @@
 import { join } from 'path';
-
+import { createClient } from 'redis';
+import { logger } from './utils/logger';
 export const config = {
     port: Number(process.env.PORT) || 3001,
     clerkSecretKey: process.env.CLERK_SECRET_KEY || '',
@@ -36,3 +37,14 @@ export const config = {
       weeklyConversationLimit: 10, // 10 free conversations per week
     },
   };
+
+
+
+export const redisClient = createClient({
+  url: `redis://${config.redis.host}:${config.redis.port}` // e.g., "redis://localhost:6379"
+});
+
+redisClient.on('error', (err) => logger.error('Redis Client Error:', err));
+(async () => {
+  await redisClient.connect();
+})();

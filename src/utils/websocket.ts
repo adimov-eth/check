@@ -1,9 +1,12 @@
 // src/utils/websocket.ts
+import { redisClient } from '@/config';
 import type { WebSocketMessage } from '@/types/websocket';
 import { IncomingMessage, Server } from 'http';
 import type { Socket } from 'net';
 import { WebSocket, WebSocketServer } from 'ws';
 import { logger } from './logger';
+
+
 
 interface WebSocketClient extends WebSocket {
   userId: string;
@@ -67,7 +70,7 @@ export class WebSocketManager {
         ws.isAlive = true;
       });
 
-      ws.on('message', (message) => {
+      ws.on('message', async (message) => {
         try {
           const rawMessage = message.toString();
           logger.debug(`Received message from client ${userId}: ${rawMessage}`);
@@ -75,25 +78,23 @@ export class WebSocketManager {
           const data = JSON.parse(rawMessage);
           
           if (data.type === 'subscribe' && data.topic) {
-            // Add topic to client's subscriptions
             ws.subscribedTopics.add(data.topic);
             logger.info(`Client ${userId} subscribed to ${data.topic}`);
-            
-            // Send confirmation of subscription to client
+        
+            const key = `ws:buffer:${userId}:${data.topic}`;
+            const bufferCount = await redisClient.lLen(key) || 0;
+        
             ws.send(JSON.stringify({
               type: 'subscription_confirmed',
               timestamp: new Date().toISOString(),
-              payload: { 
+              payload: {
                 topic: data.topic,
                 activeSubscriptions: Array.from(ws.subscribedTopics),
-                bufferedMessageCount: this.messageBuffer.filter(m => m.userId === userId && m.topic === data.topic).length
+                bufferedMessageCount: bufferCount
               }
             }));
-            
-            // Send any buffered messages for this topic
+        
             this.sendBufferedMessages(ws, data.topic);
-            
-            logger.debug(`Client ${userId} subscriptions: ${Array.from(ws.subscribedTopics).join(', ')}`);
           } else if (data.type === 'unsubscribe' && data.topic) {
             ws.subscribedTopics.delete(data.topic);
             logger.info(`Client ${userId} unsubscribed from ${data.topic}`);
@@ -150,49 +151,43 @@ export class WebSocketManager {
     });
   }
   
+  
   // Send any buffered messages for the topic to this specific client
-  private sendBufferedMessages(ws: WebSocketClient, topic: string): void {
-    logger.info(`Sending buffered messages for topic ${topic} to user ${ws.userId}`);
-    
+  private async sendBufferedMessages(ws: WebSocketClient, topic: string): Promise<void> {
+    const key = `ws:buffer:${ws.userId}:${topic}`;
+    const messages = await redisClient.lRange(key, 0, -1);
     const now = Date.now();
     let sentCount = 0;
     let skippedCount = 0;
-    
-    // Find buffered messages for this user and topic
-    const relevantMessages = this.messageBuffer
-      .filter(msg => msg.userId === ws.userId && msg.topic === topic && (now - msg.timestamp) < this.messageExpiry);
-
-    // Sort messages by timestamp to maintain order
-    relevantMessages
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .forEach(msg => {
-        try {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(msg.data));
-            sentCount++;
-            
-            // Remove sent message from buffer
-            const index = this.messageBuffer.indexOf(msg);
-            if (index > -1) {
-              this.messageBuffer.splice(index, 1);
-            }
-          } else {
-            skippedCount++;
-          }
-        } catch (error) {
-          logger.error(`Error sending buffered message: ${error}`);
+    const messageExpiry = 5 * 60 * 1000; // 5 minutes
+  
+    const relevantMessages = messages
+      .map(msg => JSON.parse(msg))
+      .filter(msg => (now - msg.timestamp) < messageExpiry);
+  
+    for (const msg of relevantMessages) {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(msg.data));
+          sentCount++;
+        } else {
           skippedCount++;
         }
-      });
-    
+      } catch (error) {
+        logger.error(`Error sending buffered message: ${error}`);
+        skippedCount++;
+      }
+    }
+  
+    // Optionally clear sent messages to prevent re-sending
+    if (sentCount > 0) {
+      await redisClient.del(key); // Clear the list after successful send
+    }
+  
     logger.info(`Buffered message delivery report for user ${ws.userId}, topic ${topic}:`);
     logger.info(`- Sent: ${sentCount}`);
     logger.info(`- Skipped: ${skippedCount}`);
-    logger.info(`- Remaining in buffer: ${this.messageBuffer.length}`);
-    
-    if (sentCount === 0 && relevantMessages.length > 0) {
-      logger.warn(`Failed to deliver any buffered messages for topic ${topic} to user ${ws.userId}`);
-    }
+    logger.info(`- Total in buffer before sending: ${messages.length}`);
   }
 
   private startPingInterval(): void {
@@ -308,23 +303,13 @@ export class WebSocketManager {
     logger.debug(`Message delivery report for topic ${topic}: sent=${sentCount}, not subscribed=${notSubscribedCount}, closed=${closedCount}, total clients=${userClients.size}`);
   }
 
-  private bufferMessage(userId: string, topic: string, data: WebSocketMessage): void {
-    // Add the message to the buffer with a timestamp
-    this.messageBuffer.push({
-      userId,
-      topic,
-      data,
-      timestamp: Date.now()
-    });
-    
-    // If the buffer exceeds its maximum size, remove the oldest messages
-    if (this.messageBuffer.length > this.maxBufferSize) {
-      const overflow = this.messageBuffer.length - this.maxBufferSize;
-      this.messageBuffer.splice(0, overflow);
-      logger.debug(`Message buffer overflow, removed ${overflow} oldest messages`);
-    }
-    
-    logger.debug(`Buffered message for user ${userId} and topic ${topic}, buffer size: ${this.messageBuffer.length}`);
+  private async bufferMessage(userId: string, topic: string, data: WebSocketMessage): Promise<void> {
+    const key = `ws:buffer:${userId}:${topic}`;
+    const message = JSON.stringify({ data, timestamp: Date.now() });
+    await redisClient.rPush(key, message);
+    // Set an expiry to clean up old buffers (e.g., 1 hour)
+    await redisClient.expire(key, 3600);
+    logger.debug(`Buffered message for user ${userId} and topic ${topic}, key: ${key}`);
   }
 
   public broadcast(data: WebSocketMessage): void {
