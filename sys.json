@@ -24,6 +24,14 @@
         "env": {
           "NODE_ENV": "production"
         }
+      },
+      {
+        "name": "vibecheck-notification-worker",
+        "script": "bun",
+        "args": "src/workers/notification-worker.ts",
+        "env": {
+          "NODE_ENV": "production"
+        }
       }
     ]
   }
