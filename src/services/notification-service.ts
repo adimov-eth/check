@@ -1,138 +1,110 @@
-// src/services/notification-service.ts
+import { notificationQueue } from '@/queues';
 import { logger } from '@/utils/logger';
-import { websocketManager } from '@/utils/websocket';
 
-export const sendTranscriptNotification = (
+export const sendTranscriptNotification = async (
   userId: string,
   conversationId: string,
   content: string
-): void => {
+): Promise<void> => {
   const topic = `conversation:${conversationId}`;
-  
-  websocketManager.sendToSubscribedClients(userId, topic, {
+  await notificationQueue.add('transcript', {
     type: 'transcript',
-    timestamp: new Date().toISOString(),
-    payload: { 
-      conversationId, 
-      content 
-    },
+    userId,
+    topic,
+    payload: { conversationId, content },
+    timestamp: new Date().toISOString()
   });
-  
-  logger.debug(`Sent transcript notification for conversation ${conversationId} to user ${userId}`);
+  logger.debug(`Queued transcript notification for conversation ${conversationId} to user ${userId}`);
 };
 
-export const sendAnalysisNotification = (
+export const sendAnalysisNotification = async (
   userId: string,
   conversationId: string,
   content: string
-): void => {
+): Promise<void> => {
   const topic = `conversation:${conversationId}`;
-  
-  websocketManager.sendToSubscribedClients(userId, topic, {
+  await notificationQueue.add('analysis', {
     type: 'analysis',
-    timestamp: new Date().toISOString(),
-    payload: { 
-      conversationId, 
-      content 
-    },
+    userId,
+    topic,
+    payload: { conversationId, content },
+    timestamp: new Date().toISOString()
   });
-  
-  logger.debug(`Sent analysis notification for conversation ${conversationId} to user ${userId}`);
+  logger.debug(`Queued analysis notification for conversation ${conversationId} to user ${userId}`);
 };
 
-export const sendStatusNotification = (
+export const sendStatusNotification = async (
   userId: string,
   conversationId: string,
   status: 'processing' | 'completed' | 'error',
   error?: string
-): void => {
+): Promise<void> => {
   const topic = `conversation:${conversationId}`;
-  
-  websocketManager.sendToSubscribedClients(userId, topic, {
+  await notificationQueue.add('status', {
     type: 'status',
-    timestamp: new Date().toISOString(),
-    payload: { 
-      conversationId, 
-      status, 
-      ...(error && { error }) 
-    },
+    userId,
+    topic,
+    payload: { conversationId, status, ...(error && { error }) },
+    timestamp: new Date().toISOString()
   });
-  
-  logger.debug(`Sent status notification (${status}) for conversation ${conversationId} to user ${userId}`);
+  logger.debug(`Queued status notification (${status}) for conversation ${conversationId} to user ${userId}`);
 };
 
-export const sendConversationNotification = (
+export const sendConversationNotification = async (
   userId: string,
   conversationId: string,
   status: 'conversation_started' | 'conversation_completed',
   payload?: Record<string, unknown>
-): void => {
+): Promise<void> => {
   const topic = `conversation:${conversationId}`;
   const timestamp = new Date().toISOString();
-  
-  // For 'conversation_completed', ensure we're using a consistent message format
-  // that the client can easily parse
+
   if (status === 'conversation_completed') {
-    // First, send the status update
-    websocketManager.sendToSubscribedClients(userId, topic, {
+    // Queue status update
+    await notificationQueue.add('status', {
       type: 'status',
-      timestamp,
-      payload: { 
-        conversationId, 
-        status, 
-        // Make sure gptResponse is directly accessible in the payload
-        gptResponse: payload?.gptResponse || null,
-        ...payload 
-      },
+      userId,
+      topic,
+      payload: { conversationId, status, ...payload },
+      timestamp
     });
-    
-    // Then also send an explicit analysis message for better client compatibility
-    // This helps clients that might be watching for just analysis messages
+    // Queue analysis if gptResponse is available
     if (payload?.gptResponse) {
-      websocketManager.sendToSubscribedClients(userId, topic, {
+      await notificationQueue.add('analysis', {
         type: 'analysis',
-        timestamp,
-        payload: { 
-          conversationId, 
-          content: payload.gptResponse as string 
-        },
+        userId,
+        topic,
+        payload: { conversationId, content: payload.gptResponse as string },
+        timestamp
       });
     }
-    
-    logger.debug(`Sent conversation completed notification for ${conversationId} to user ${userId}`);
+    logger.debug(`Queued conversation completed notifications for ${conversationId} to user ${userId}`);
   } else {
-    // For other status updates like 'conversation_started'
-    websocketManager.sendToSubscribedClients(userId, topic, {
+    // Queue status update for other statuses
+    await notificationQueue.add('status', {
       type: 'status',
-      timestamp,
-      payload: { 
-        conversationId, 
-        status, 
-        ...payload 
-      },
+      userId,
+      topic,
+      payload: { conversationId, status, ...payload },
+      timestamp
     });
-    
-    logger.debug(`Sent conversation started notification for ${conversationId} to user ${userId}`);
+    logger.debug(`Queued conversation started notification for ${conversationId} to user ${userId}`);
   }
 };
 
-export const sendAudioNotification = (
+export const sendAudioNotification = async (
   userId: string,
   audioId: string,
   conversationId: string,
   status: 'processing' | 'transcribed' | 'failed'
-): void => {
+): Promise<void> => {
   const topic = `conversation:${conversationId}`;
-  
-  websocketManager.sendToSubscribedClients(userId, topic, {
+  await notificationQueue.add('audio', {
     type: 'audio',
-    timestamp: new Date().toISOString(),
-    payload: { 
-      audioId, 
-      status,
-      conversationId // Include conversationId for easier client-side filtering
-    },
+    userId,
+    topic,
+    payload: { audioId, status, conversationId },
+    timestamp: new Date().toISOString()
   });
-  
-  logger.debug(`Sent audio notification (${status}) for audio ${audioId} in conversation ${conversationId}`);
+  logger.debug(`Queued audio notification (${status}) for audio ${audioId} in conversation ${conversationId}`);
 };

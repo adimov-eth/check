@@ -2,6 +2,15 @@ import { config } from '@/config';
 import { Queue } from 'bullmq';
 import type { GptJob } from '../types';
 
+// Define notification job type
+export interface NotificationJob {
+  type: 'transcript' | 'analysis' | 'error' | 'status' | 'audio';
+  userId: string;
+  topic: string;
+  payload: Record<string, unknown>;
+  timestamp: string;
+}
+
 interface QueueConfig {
   name: string;
   defaultJobOptions?: {
@@ -40,6 +49,18 @@ const queueConfigs: QueueConfig[] = [
       removeOnComplete: true,
       removeOnFail: 100
     }
+  },
+  {
+    name: 'notifications',
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 5000
+      },
+      removeOnComplete: 100, // Keep last 100 completed jobs
+      removeOnFail: 100 // Keep last 100 failed jobs
+    }
   }
 ];
 
@@ -54,6 +75,7 @@ const createQueue = (queueConfig: QueueConfig): Queue => {
 // Initialize queues
 export const audioQueue = createQueue(queueConfigs[0]);
 export const cleanupQueue = createQueue(queueConfigs[1]);
+export const notificationQueue = createQueue(queueConfigs[2]);
 export const gptQueue = new Queue<GptJob>('gptProcessing', {
   connection: config.redis,
   defaultJobOptions: {
@@ -81,6 +103,7 @@ cleanupQueue.add(
 export const queues = {
   audioQueue,
   cleanupQueue,
+  notificationQueue,
   gptQueue
 };
 
@@ -90,6 +113,7 @@ const gracefulShutdown = async (): Promise<void> => {
     await Promise.all([
       audioQueue.close(),
       cleanupQueue.close(),
+      notificationQueue.close(),
       gptQueue.close()
     ]);
     console.log('Queues closed gracefully');
