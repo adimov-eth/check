@@ -43,14 +43,7 @@ const createPrompt = (
  */
 const queueConnection: ConnectionOptions = {
   host: config.redis.host,
-  port: config.redis.port,
-  connectTimeout: 10000,
-  maxRetriesPerRequest: 3,
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 1000, 10000);
-    logger.info(`Redis connection retry ${times} in ${delay}ms`);
-    return delay;
-  }
+  port: config.redis.port
 };
 
 /**
