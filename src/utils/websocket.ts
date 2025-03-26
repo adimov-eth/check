@@ -60,6 +60,7 @@ export class WebSocketManager {
       ws.isAlive = true;
       
       logger.info(`WebSocket client connected: ${userId}, active connections: ${this.clients.get(userId)?.size || 0}`);
+      logger.info(`Current buffer size for user ${userId}: ${this.messageBuffer.filter(m => m.userId === userId).length}`);
 
       // Handle ping/pong for connection health monitoring
       ws.on('pong', () => {
@@ -84,7 +85,8 @@ export class WebSocketManager {
               timestamp: new Date().toISOString(),
               payload: { 
                 topic: data.topic,
-                activeSubscriptions: Array.from(ws.subscribedTopics) 
+                activeSubscriptions: Array.from(ws.subscribedTopics),
+                bufferedMessageCount: this.messageBuffer.filter(m => m.userId === userId && m.topic === data.topic).length
               }
             }));
             
@@ -154,24 +156,42 @@ export class WebSocketManager {
     
     const now = Date.now();
     let sentCount = 0;
+    let skippedCount = 0;
     
     // Find buffered messages for this user and topic
-    this.messageBuffer
-      .filter(msg => msg.userId === ws.userId && msg.topic === topic && (now - msg.timestamp) < this.messageExpiry)
-      .sort((a, b) => a.timestamp - b.timestamp) // Process in chronological order
+    const relevantMessages = this.messageBuffer
+      .filter(msg => msg.userId === ws.userId && msg.topic === topic && (now - msg.timestamp) < this.messageExpiry);
+
+    // Sort messages by timestamp to maintain order
+    relevantMessages
+      .sort((a, b) => a.timestamp - b.timestamp)
       .forEach(msg => {
         try {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(msg.data));
             sentCount++;
+            
+            // Remove sent message from buffer
+            const index = this.messageBuffer.indexOf(msg);
+            if (index > -1) {
+              this.messageBuffer.splice(index, 1);
+            }
+          } else {
+            skippedCount++;
           }
         } catch (error) {
           logger.error(`Error sending buffered message: ${error}`);
+          skippedCount++;
         }
       });
     
-    if (sentCount > 0) {
-      logger.info(`Sent ${sentCount} buffered messages for topic ${topic} to user ${ws.userId}`);
+    logger.info(`Buffered message delivery report for user ${ws.userId}, topic ${topic}:`);
+    logger.info(`- Sent: ${sentCount}`);
+    logger.info(`- Skipped: ${skippedCount}`);
+    logger.info(`- Remaining in buffer: ${this.messageBuffer.length}`);
+    
+    if (sentCount === 0 && relevantMessages.length > 0) {
+      logger.warn(`Failed to deliver any buffered messages for topic ${topic} to user ${ws.userId}`);
     }
   }
 
