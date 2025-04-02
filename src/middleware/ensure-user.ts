@@ -1,10 +1,10 @@
 import { getUserId } from '@/middleware/auth';
+import { AuthenticationError } from '@/middleware/error';
 import { userCache } from '@/services/user-cache-service';
 import { getUser, upsertUser } from '@/services/user-service';
-import type { Middleware } from '@/types/common';
+import type { AuthenticatedRequest, Middleware } from '@/types/common';
 import { formatError } from '@/utils/error-formatter';
 import { logger } from '@/utils/logger';
-import type { ExpressRequestWithAuth } from '@clerk/express';
 
 /**
  * Middleware to ensure a user exists in our database
@@ -12,84 +12,58 @@ import type { ExpressRequestWithAuth } from '@clerk/express';
  */
 export const ensureUser: Middleware = (req, res, next): void => {
   const handleAsync = async () => {
-    const userId = getUserId(req as ExpressRequestWithAuth);
+    const authReq = req as AuthenticatedRequest;
+    const userId = getUserId(authReq);
+
     if (!userId) {
-      return;
+      // This should ideally be caught by requireAuth first
+      throw new AuthenticationError('User ID missing after authentication middleware');
     }
 
-    // Check cache first
-    const exists = userCache.get(userId);
+    // Check cache first - AWAIT the result
+    const exists = await userCache.get(userId);
     if (exists) {
-      return;
+      return; // User known to exist, continue
     }
 
     // If not in cache or cache expired, check database
     const user = await getUser(userId);
-    
+
     if (user) {
-      userCache.set(userId, true);
-      return;
+      await userCache.set(userId, true); // Update cache - Also await this
+      return; // User exists in DB, continue
     }
 
-    // User doesn't exist, get their info from Clerk auth object
-    const auth = (req as ExpressRequestWithAuth).auth;
-    
-    // Always create a user record, even if we don't have complete information
-    try {
-      if (auth?.userId && auth.sessionClaims?.email) {
-        // We have complete information, create a proper user record
-        const result = await upsertUser({
-          id: auth.userId,
-          email: auth.sessionClaims.email as string,
-          name: auth.sessionClaims.name as string
-        });
-        
-        if (result.success) {
-          userCache.set(userId, true);
-          logger.info(`Created missing user record for ${userId} with complete info`);
-        } else {
-          logger.error(`Failed to create user record: ${formatError(result.error)}`);
-        }
-      } else if (auth?.userId) {
-        // We only have userId, create a minimal record
-        // This shouldn't normally happen, but we want to be robust
-        const tempEmail = `${auth.userId}@temporary.vibecheck.app`;
-        
-        const result = await upsertUser({
-          id: auth.userId,
-          email: tempEmail,
-          name: undefined
-        });
-        
-        if (result.success) {
-          userCache.set(userId, true);
-          logger.warn(`Created minimal user record for ${userId} without email claim`);
-        } else {
-          logger.error(`Failed to create minimal user record: ${formatError(result.error)}`);
-        }
-      } else {
-        // This is a highly unusual situation - we have a userId from Clerk but no auth object
-        logger.warn('Missing auth object for authenticated user', { userId });
-        
-        // Still try to create a minimal record
-        const tempEmail = `${userId}@temporary.vibecheck.app`;
-        
-        const result = await upsertUser({
-          id: userId,
-          email: tempEmail,
-          name: undefined
-        });
-        
-        if (result.success) {
-          userCache.set(userId, true);
-          logger.warn(`Created emergency minimal user record for ${userId} with no auth data`);
-        } else {
-          logger.error(`Failed to create emergency user record: ${formatError(result.error)}`);
-        }
-      }
-    } catch (error) {
-      // Log but don't throw - we want to continue processing the request
-      logger.error(`Error ensuring user exists: ${formatError(error)}`);
+    // User not found in cache or DB - attempt to create
+    logger.info(`User ${userId} not found in DB, attempting to create record.`);
+
+    // Use email directly from the authenticated request if available
+    const emailToUse = authReq.email;
+    if (!emailToUse) {
+      // If email is missing after auth, it's a problem.
+      // Avoid creating users with temporary emails if possible.
+      logger.warn(`Cannot create user ${userId}: Email missing from authenticated request.`);
+      // Decide if this is a fatal error for the request:
+      // throw new Error(`User creation failed for ${userId}: Email missing.`);
+      // Or allow continuation:
+      return; // Or proceed without user creation if non-critical
+    }
+
+    // Name is not reliably available from token after first login.
+    // Let upsertUser handle potential existing name or null.
+    const result = await upsertUser({
+      id: userId,
+      email: emailToUse,
+      name: undefined // Let upsertUser handle potential existing name or null
+    });
+
+    if (result.success) {
+      await userCache.set(userId, true); // Await cache set here too
+      logger.info(`Created user record for ${userId}`);
+    } else {
+      // If upsert failed, log the error and re-throw it
+      logger.error(`Failed to create user record for ${userId}: ${formatError(result.error)}`);
+      throw result.error; // Propagate the error
     }
   };
 
@@ -97,7 +71,9 @@ export const ensureUser: Middleware = (req, res, next): void => {
   handleAsync()
     .then(() => next())
     .catch(error => {
-      logger.error(`Error in ensureUser middleware: ${formatError(error)}`);
+      // Log the specific error from ensureUser
+      logger.error(`Error in ensureUser middleware for user ${getUserId(req as AuthenticatedRequest) || 'unknown'}: ${formatError(error)}`);
+      // Pass the error to the global error handler
       next(error);
     });
 }; 

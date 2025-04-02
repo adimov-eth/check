@@ -3,10 +3,9 @@ import { createClient } from 'redis';
 import { logger } from './utils/logger';
 export const config = {
     port: Number(process.env.PORT) || 3001,
-    clerkSecretKey: process.env.CLERK_SECRET_KEY || '',
-    clerkWebhookSecret: process.env.CLERK_WEBHOOK_SECRET || '',
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     appleSharedSecret: process.env.APPLE_SHARED_SECRET || '',
+    appleBundleId: process.env.APPLE_BUNDLE_ID || 'com.yourcompany.yourapp',
     nodeEnv: process.env.NODE_ENV || 'development',
     
     // Redis configuration

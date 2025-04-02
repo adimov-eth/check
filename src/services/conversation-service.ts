@@ -19,10 +19,11 @@ export const createConversation = async ({
   return await transaction(async () => {
     try {
       const id = randomUUIDv7();
+      const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
       
-      // Get user or create if doesn't exist from Clerk
+      // Get user or create if doesn't exist
       // If this is being called, we've already passed auth middleware,
-      // so we know the user exists in Clerk
+      // so we know the user exists in our auth system
       const userExistsResult = await query<{ exists_flag: number }>(
         'SELECT 1 as exists_flag FROM users WHERE id = ? LIMIT 1',
         [userId]
@@ -31,42 +32,30 @@ export const createConversation = async ({
       const userExists = userExistsResult[0]?.exists_flag === 1;
       
       if (!userExists) {
-        // Create a basic user record with the information we have
-        try {
-          logger.warn(`User ${userId} not found in database but exists in Clerk auth. Creating minimal record.`);
-          
-          // Since email is required, let's use a temporary one based on userId
-          // Later the Clerk webhook or auth middleware will update with the real email
-          const tempEmail = `${userId}@temporary.vibecheck.app`;
-          
-          await run(
-            'INSERT INTO users (id, email) VALUES (?, ?)',
-            [userId, tempEmail]
-          );
-          
-          logger.info(`Created minimal user record for ${userId} with temporary email`);
-        } catch (error) {
-          logger.error(`Failed to create user record: ${error instanceof Error ? error.message : String(error)}`);
-          throw new Error(`Failed to create user record for ${userId}`);
-        }
+        // This shouldn't happen with proper middleware
+        logger.error(`User ${userId} not found in database but passed auth middleware`);
+        throw new Error(`User not found: ${userId}`);
       }
       
-      const conversations = await query<Conversation>(
-        `INSERT INTO conversations (id, userId, mode, recordingType, status)
-         VALUES (?, ?, ?, ?, ?)
-         RETURNING *`,
-        [id, userId, mode, recordingType, 'waiting']
+      // Create the conversation
+      await run(
+        'INSERT INTO conversations (id, userId, mode, recordingType, status, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, userId, mode, recordingType, 'waiting', now, now]
       );
       
-      const conversation = conversations[0];
-      if (!conversation) {
-        throw new Error('Failed to create conversation');
-      }
-      
       logger.info(`Created conversation ${id} for user ${userId}`);
-      return conversation;
+      
+      return {
+        id,
+        userId,
+        mode,
+        recordingType,
+        status: 'waiting',
+        createdAt: now,
+        updatedAt: now
+      };
     } catch (error) {
-      logger.error(`Error creating conversation: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(`Failed to create conversation: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   });

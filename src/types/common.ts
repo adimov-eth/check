@@ -5,10 +5,15 @@
 import type { NextFunction, Request, Response } from 'express';
 
 /**
- * Enhanced request object with authenticated user ID
+ * Enhanced request object with authenticated user info
  */
 export interface AuthenticatedRequest extends Request {
   userId: string;
+  email?: string;
+  fullName?: {
+    givenName?: string;
+    familyName?: string;
+  };
   resource?: unknown;
 }
 

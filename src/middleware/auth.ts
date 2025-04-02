@@ -1,45 +1,88 @@
-import { config } from '@/config';
 import { AuthenticationError, NotFoundError } from '@/middleware/error';
 import type { AuthenticatedRequest, Middleware } from '@/types/common';
+import { verifyAppleToken } from '@/utils/apple-auth';
 import { formatError } from '@/utils/error-formatter';
 import { logger } from '@/utils/logger';
-import { clerkMiddleware, type ExpressRequestWithAuth } from '@clerk/express';
+import jwt from 'jsonwebtoken';
 
 /**
- * Middleware for Clerk authentication
+ * Decoded Apple token payload interface
  */
-export const requireAuth = clerkMiddleware({
-  secretKey: config.clerkSecretKey,
-});
+interface DecodedAppleToken {
+  sub: string; // Apple's unique user ID
+  email?: string;
+  email_verified?: boolean;
+  is_private_email?: boolean;
+  // Name might not be present in the token itself after first login
+  // It's only included in the first sign-in response
+}
+
+/**
+ * Extract token from Authorization header
+ */
+const extractToken = (req: AuthenticatedRequest): string | null => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  return authHeader.slice(7);
+};
+
+/**
+ * Middleware for Apple authentication
+ */
+export const requireAuth: Middleware = async (req, res, next) => {
+  try {
+    const token = extractToken(req as AuthenticatedRequest);
+    if (!token) {
+      return next(new AuthenticationError('Unauthorized: No token provided'));
+    }
+
+    // Verify the token signature and basic claims with Apple
+    const result = await verifyAppleToken(token);
+    if (!result.success) {
+      return next(new AuthenticationError(`Unauthorized: ${result.error.message}`));
+    }
+
+    // Attach user info to request
+    const authReq = req as AuthenticatedRequest;
+    authReq.userId = `apple:${result.data.userId}`;
+    authReq.email = result.data.email; // Email from verified token
+
+    // Attempt to decode the token to get additional fields
+    // This is less critical as the primary source should be the DB
+    // Apple often only includes name/email in the *first* token
+    try {
+      const decodedPayload = jwt.decode(token) as DecodedAppleToken | null;
+      if (decodedPayload?.email && !authReq.email) {
+        // Fallback if verifyAppleToken didn't return it but decode did
+        authReq.email = decodedPayload.email;
+      }
+    } catch (decodeError) {
+      logger.warn(`Could not decode token payload after verification: ${formatError(decodeError)}`);
+      // Continue since token was already verified
+    }
+
+    next();
+  } catch (error) {
+    logger.error(`Error in requireAuth: ${formatError(error)}`);
+    next(new AuthenticationError('Unauthorized: Invalid token'));
+  }
+};
 
 /**
  * Extract user ID from authenticated request
  */
-export const getUserId = (req: ExpressRequestWithAuth): string | null => req.auth?.userId ?? null;
+export const getUserId = (req: AuthenticatedRequest): string | null => req.userId ?? null;
 
 /**
  * Middleware to verify user ID exists and attach it to request
  * This enhances the request with a userId property for convenience
  */
 export const requireUserId: Middleware = (req, res, next): void => {
-  const userId = getUserId(req as ExpressRequestWithAuth);
+  const userId = getUserId(req as AuthenticatedRequest);
   if (!userId) {
     return next(new AuthenticationError('Unauthorized: No user ID found'));
   }
-  
-  // Attach userId to request object for convenience in route handlers
-  (req as AuthenticatedRequest).userId = userId;
   next();
-};
-
-/**
- * Composable auth middleware - combines auth check and userId extraction
- */
-export const authenticate: Middleware = (req, res, next): void => {
-  requireAuth(req, res, (authError) => {
-    if (authError) return next(authError);
-    requireUserId(req, res, next);
-  });
 };
 
 /**
@@ -56,7 +99,7 @@ export const requireResourceOwnership = (
   return async (req, res, next): Promise<void> => {
     try {
       // First make sure we have a userId
-      const userId = (req as AuthenticatedRequest).userId || getUserId(req as ExpressRequestWithAuth);
+      const userId = (req as AuthenticatedRequest).userId;
       if (!userId) {
         return next(new AuthenticationError('Unauthorized: No user ID found'));
       }

@@ -1,389 +1,308 @@
-import { config } from '@/config';
 import { query, run, transaction } from '@/database';
-import type { Subscription } from '@/types';
+import type { Result } from '@/types/common';
+import { formatError } from '@/utils/error-formatter';
 import { logger } from '@/utils/logger';
-import fetch from 'node-fetch';
+import type { VerifiedNotificationPayload } from './apple-jws-verifier';
 
-// Product ID mapping to subscription types
-const PRODUCT_ID_MAP: Record<string, string> = {
-  'com.vibecheck.subscription.monthly': 'monthly',
-  'com.vibecheck.subscription.yearly': 'yearly',
-};
-
-// Apple verification endpoints
-const APPLE_VERIFICATION_ENDPOINTS = {
-  production: 'https://buy.itunes.apple.com/verifyReceipt',
-  sandbox: 'https://sandbox.itunes.apple.com/verifyReceipt',
-} as const;
-
-interface AppleVerificationResponse {
-  status: number;
-  environment: string;
-  receipt: {
-    in_app: Array<{
-      product_id: string;
-      transaction_id: string;
-      original_transaction_id: string;
-      purchase_date_ms: string;
-      expires_date_ms?: string;
-    }>;
-  };
-  latest_receipt_info?: Array<{
-    product_id: string;
-    transaction_id: string;
-    original_transaction_id: string;
-    purchase_date_ms: string;
-    expires_date_ms?: string;
-  }>;
-}
-
-interface VerificationResult {
-  isValid: boolean;
+// Interface matching the database 'subscriptions' table structure
+interface SubscriptionRecord {
+  id: string;
+  userId: string;
+  originalTransactionId: string;
+  productId: string;
   expiresDate: number | null;
-  environment: string;
-  productId: string | null;
-  type: string | null;
-  transactionId: string | null;
-  originalTransactionId: string | null;
-  purchaseDate: number | null;
-  error?: string;
+  purchaseDate: number;
+  status: string;
+  environment: 'Sandbox' | 'Production';
+  lastTransactionId: string;
+  lastTransactionInfo: string | null;
+  lastRenewalInfo: string | null;
+  createdAt: number;
+  updatedAt: number;
+  appAccountToken?: string | null;
+  subscriptionGroupIdentifier?: string | null;
+  offerType?: number | null;
+  offerIdentifier?: string | null;
 }
 
-/**
- * Parse Apple's verification response into our standard format
- */
-const parseVerificationResult = (
-  data: AppleVerificationResponse,
-  environment: 'production' | 'sandbox'
-): VerificationResult => {
-  // Get the most recent transaction from either latest_receipt_info or in_app
-  const latestTransaction = 
-    data.latest_receipt_info?.[0] || 
-    data.receipt.in_app[data.receipt.in_app.length - 1];
+// Return type for hasActiveSubscription
+interface ActiveSubscriptionStatus {
+    isActive: boolean;
+    expiresDate?: number | null;
+    type?: string | null;
+    subscriptionId?: string | null;
+}
 
-  if (!latestTransaction) {
-    return {
-      isValid: false,
-      expiresDate: null,
-      environment,
-      productId: null,
-      type: null,
-      transactionId: null,
-      originalTransactionId: null,
-      purchaseDate: null,
-      error: 'No valid transaction found in receipt'
-    };
-  }
-
-  const purchaseDate = parseInt(latestTransaction.purchase_date_ms) / 1000;
-  const expiresDate = latestTransaction.expires_date_ms 
-    ? parseInt(latestTransaction.expires_date_ms) / 1000 
-    : null;
-
-  return {
-    isValid: true,
-    expiresDate,
-    environment,
-    productId: latestTransaction.product_id,
-    type: PRODUCT_ID_MAP[latestTransaction.product_id] || null,
-    transactionId: latestTransaction.transaction_id,
-    originalTransactionId: latestTransaction.original_transaction_id,
-    purchaseDate
-  };
-};
-
-/**
- * Verify Apple receipt data with retries and sandbox fallback
- */
-export const verifyAppleReceipt = async (
-  receiptData: string,
-  excludeSandbox = false
-): Promise<VerificationResult> => {
-  try {
-    logger.info('Verifying Apple receipt...');
-
-    // Try production environment first
-    const productionResponse = await fetch(APPLE_VERIFICATION_ENDPOINTS.production, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        'receipt-data': receiptData,
-        password: config.appleSharedSecret
-      })
-    });
-
-    if (!productionResponse.ok) {
-      throw new Error(`Apple verification failed with status ${productionResponse.status}`);
-    }
-
-    const productionData = await productionResponse.json() as AppleVerificationResponse;
-
-    // Status 21007 indicates a sandbox receipt
-    if (productionData.status === 21007 && !excludeSandbox) {
-      logger.info('Receipt is from sandbox environment, retrying with sandbox endpoint...');
-      
-      const sandboxResponse = await fetch(APPLE_VERIFICATION_ENDPOINTS.sandbox, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          'receipt-data': receiptData,
-          password: config.appleSharedSecret
-        })
-      });
-
-      if (!sandboxResponse.ok) {
-        throw new Error(`Apple sandbox verification failed with status ${sandboxResponse.status}`);
-      }
-
-      const sandboxData = await sandboxResponse.json() as AppleVerificationResponse;
-      
-      if (sandboxData.status === 0) {
-        return parseVerificationResult(sandboxData, 'sandbox');
-      }
-      
-      throw new Error(`Apple sandbox verification returned status ${sandboxData.status}`);
-    }
-
-    // Handle other status codes
-    if (productionData.status !== 0) {
-      const errorMessage = getAppleStatusCodeError(productionData.status);
-      throw new Error(errorMessage);
-    }
-
-    return parseVerificationResult(productionData, 'production');
-  } catch (error) {
-    logger.error(`Receipt verification error: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      isValid: false,
-      expiresDate: null,
-      environment: 'unknown',
-      productId: null,
-      type: null,
-      transactionId: null,
-      originalTransactionId: null,
-      purchaseDate: null,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
-};
-
-/**
- * Get human-readable error message for Apple status codes
- */
-const getAppleStatusCodeError = (status: number): string => {
-  const errorMessages: Record<number, string> = {
-    21000: 'The App Store could not read the JSON object you provided.',
-    21002: 'The data in the receipt-data property was malformed.',
-    21003: 'The receipt could not be authenticated.',
-    21004: 'The shared secret you provided does not match the shared secret on file for your account.',
-    21005: 'The receipt server is not currently available.',
-    21006: 'This receipt is valid but the subscription has expired.',
-    21007: 'This receipt is from the test environment, but it was sent to the production environment for verification.',
-    21008: 'This receipt is from the production environment, but it was sent to the test environment for verification.',
-    21010: 'This receipt could not be authorized.',
-    21100: 'Internal data access error.',
-    21199: 'Unknown error occurred while processing receipt.'
-  };
-
-  return errorMessages[status] || `Unknown status code: ${status}`;
-};
-
-/**
- * Save a verified subscription to the database
- */
-export const saveSubscription = async (
-  userId: string,
-  receiptData: string,
-  verificationResult: VerificationResult
-): Promise<number> => {
-  return await transaction(async () => {
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      
-      // Check if user exists, if not create a minimal record
-      const userResult = await query<{ exists: number }>(
-        `SELECT 1 as exists FROM users WHERE id = ? LIMIT 1`,
-        [userId]
-      );
-      
-      if (!userResult[0]) {
-        logger.warn(`User ${userId} not found in database when saving subscription - creating minimal record`);
-        
-        // Create a minimal user record with a temporary email
-        const tempEmail = `${userId}@temporary.vibecheck.app`;
-        await run(
-          'INSERT INTO users (id, email) VALUES (?, ?)',
-          [userId, tempEmail]
-        );
-        
-        logger.info(`Created minimal user record for ${userId} during subscription processing`);
-      }
-      
-      // Check if transaction already exists
-      if (verificationResult.transactionId) {
-        const existingSubscriptions = await query<Subscription>(
-          `SELECT * FROM subscriptions WHERE transactionId = ? LIMIT 1`,
-          [verificationResult.transactionId]
-        );
-        
-        if (existingSubscriptions.length > 0) {
-          // Update existing subscription
-          await run(
-            `UPDATE subscriptions 
-             SET isActive = ?, 
-                 expiresDate = ?, 
-                 lastVerifiedDate = ?, 
-                 updatedAt = strftime('%s', 'now')
-             WHERE id = ?`,
-            [
-              verificationResult.isValid ? 1 : 0, 
-              verificationResult.expiresDate, 
-              now, 
-              existingSubscriptions[0].id
-            ]
-          );
-          
-          return existingSubscriptions[0].id;
+async function findUserIdForNotification(payload: VerifiedNotificationPayload): Promise<string | null> {
+    logger.debug(`Attempting to find user ID for originalTransactionId: ${payload.originalTransactionId} or appAccountToken: ${payload.appAccountToken}`);
+    if (payload.appAccountToken) {
+        try {
+            const userResult = await query<{ id: string }>('SELECT id FROM users WHERE appAccountToken = ? LIMIT 1', [payload.appAccountToken]);
+            if (userResult.length > 0) {
+                 logger.info(`Found user ${userResult[0].id} via appAccountToken`);
+                 return userResult[0].id;
+            }
+             logger.warn(`appAccountToken ${payload.appAccountToken} provided but no matching user found.`);
+        } catch (error) {
+             logger.error(`Database error looking up user by appAccountToken: ${formatError(error)}`);
         }
-      }
-      
-      // Insert new subscription
-      const newSubscription = await query<Subscription>(
-        `INSERT INTO subscriptions (
-          userId, productId, type, originalTransactionId, transactionId, 
-          receiptData, environment, isActive, expiresDate, purchaseDate, 
-          lastVerifiedDate
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        RETURNING id`,
-        [
-          userId,
-          verificationResult.productId || 'unknown',
-          verificationResult.type || 'unknown',
-          verificationResult.originalTransactionId || 'unknown',
-          verificationResult.transactionId || 'unknown',
-          receiptData,
-          verificationResult.environment || 'unknown',
-          verificationResult.isValid ? 1 : 0,
-          verificationResult.expiresDate,
-          verificationResult.purchaseDate || now,
-          now
-        ]
-      );
-      
-      return newSubscription[0].id;
+    }
+    try {
+         const subResult = await query<{ userId: string }>('SELECT userId FROM subscriptions WHERE originalTransactionId = ? ORDER BY createdAt DESC LIMIT 1', [payload.originalTransactionId]);
+         if (subResult.length > 0) {
+              logger.info(`Found user ${subResult[0].userId} via originalTransactionId ${payload.originalTransactionId}`);
+              return subResult[0].userId;
+         }
     } catch (error) {
-      logger.error(`Error saving subscription: ${error instanceof Error ? error.message : String(error)}`);
+         logger.error(`Database error looking up user by originalTransactionId: ${formatError(error)}`);
+    }
+    logger.error(`Could not find user ID for originalTransactionId: ${payload.originalTransactionId} and appAccountToken: ${payload.appAccountToken}`);
+    return null;
+}
+
+export const verifyAndSaveSubscription = async (
+  userId: string,
+  payload: VerifiedNotificationPayload
+): Promise<Result<{ subscriptionId: string }>> => {
+  logger.info(`Verifying and saving subscription info for user ${userId} from payload (OrigTxID: ${payload.originalTransactionId})`);
+
+  return await transaction<Result<{ subscriptionId: string }>>(async () => {
+    try {
+      const nowDbTimestamp = Math.floor(Date.now() / 1000);
+      const recordId = payload.originalTransactionId;
+
+      const userCheck = await query<{ id: string }>('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+      if (userCheck.length === 0) {
+          logger.error(`User ${userId} provided for subscription verification not found in database.`);
+          throw new Error(`User ${userId} not found. Cannot save subscription ${recordId}.`);
+      }
+
+      const isRenewalInfo = payload.autoRenewStatus !== undefined && payload.autoRenewProductId !== undefined;
+      const transactionJson = !isRenewalInfo ? JSON.stringify(payload) : null;
+      const renewalJson = isRenewalInfo ? JSON.stringify(payload) : null;
+      const expiresSec = payload.expiresDate ? Math.floor(payload.expiresDate / 1000) : null;
+      const internalStatus = determineSubscriptionStatus(
+        payload.expiresDate, payload.autoRenewStatus, payload.isInBillingRetryPeriod,
+        payload.gracePeriodExpiresDate, payload.revocationDate, payload.type
+      );
+
+      await run(`
+          INSERT INTO subscriptions (
+              id, userId, originalTransactionId, productId, expiresDate, purchaseDate,
+              status, environment, lastTransactionId, lastTransactionInfo, lastRenewalInfo,
+              createdAt, updatedAt, appAccountToken, subscriptionGroupIdentifier, offerType, offerIdentifier
+          ) VALUES (
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          )
+          ON CONFLICT(id) DO UPDATE SET
+              userId = excluded.userId,
+              productId = excluded.productId,
+              expiresDate = excluded.expiresDate,
+              purchaseDate = CASE WHEN excluded.purchaseDate < purchaseDate THEN excluded.purchaseDate ELSE purchaseDate END,
+              status = excluded.status,
+              environment = excluded.environment,
+              lastTransactionId = CASE WHEN excluded.updatedAt >= updatedAt THEN excluded.lastTransactionId ELSE lastTransactionId END,
+              lastTransactionInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastTransactionInfo IS NOT NULL THEN excluded.lastTransactionInfo ELSE lastTransactionInfo END,
+              lastRenewalInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastRenewalInfo IS NOT NULL THEN excluded.lastRenewalInfo ELSE lastRenewalInfo END,
+              updatedAt = excluded.updatedAt,
+              appAccountToken = COALESCE(excluded.appAccountToken, appAccountToken),
+              subscriptionGroupIdentifier = COALESCE(excluded.subscriptionGroupIdentifier, subscriptionGroupIdentifier),
+              offerType = COALESCE(excluded.offerType, offerType),
+              offerIdentifier = COALESCE(excluded.offerIdentifier, offerIdentifier)
+          WHERE
+              TRUE
+      `, [
+          recordId, userId, payload.originalTransactionId, payload.productId,
+          expiresSec,
+          Math.floor(payload.purchaseDate / 1000),
+          internalStatus,
+          payload.environment, payload.transactionId,
+          transactionJson,
+          renewalJson,
+          Math.floor(payload.purchaseDate / 1000),
+          nowDbTimestamp,
+          payload.appAccountToken || null,
+          payload.subscriptionGroupIdentifier || null,
+          payload.offerType ?? null,
+          payload.offerIdentifier || null
+      ]);
+
+      logger.info(`Successfully verified and saved subscription record ${recordId} for user ${userId}, status: ${internalStatus}`);
+      return { success: true, data: { subscriptionId: recordId } };
+
+    } catch (error) {
+      logger.error(`Database error verifying/saving subscription for user ${userId}, originalTransactionId ${payload.originalTransactionId}: ${formatError(error)}`);
       throw error;
     }
+  }).catch((error): Result<{ subscriptionId: string }> => {
+      logger.error(`Transaction failed for verifyAndSaveSubscription (User: ${userId}, OrigTxID: ${payload.originalTransactionId}): ${formatError(error)}`);
+      return { success: false, error: error instanceof Error ? error : new Error('Failed to verify/save subscription in database transaction') };
   });
 };
 
-/**
- * Check if user has an active subscription
- */
-export const hasActiveSubscription = async (userId: string): Promise<{
-  isActive: boolean;
-  expiresDate: number | null;
-  type: string | null;
-  subscriptionId: number | null;
-}> => {
-  try {
-    // Find most recent active subscription
-    const activeSubscriptions = await query<Subscription>(
-      `SELECT * FROM subscriptions 
-       WHERE userId = ? AND isActive = 1 
-       ORDER BY lastVerifiedDate DESC LIMIT 1`,
-      [userId]
+export const updateSubscriptionFromNotification = async (payload: VerifiedNotificationPayload): Promise<Result<void>> => {
+    const userId = await findUserIdForNotification(payload);
+
+    if (!userId) {
+        logger.error(`Failed to find user for notification. Original Transaction ID: ${payload.originalTransactionId}, App Account Token: ${payload.appAccountToken}`);
+        return { success: false, error: new Error('User mapping not found for transaction notification') };
+    }
+
+    logger.info(`Processing notification update for user ${userId}, original transaction ID: ${payload.originalTransactionId}`);
+
+    const isRenewalInfo = payload.autoRenewStatus !== undefined && payload.autoRenewProductId !== undefined;
+    const transactionJson = !isRenewalInfo ? JSON.stringify(payload) : null;
+    const renewalJson = isRenewalInfo ? JSON.stringify(payload) : null;
+
+    const expiresSec = payload.expiresDate ? Math.floor(payload.expiresDate / 1000) : null;
+
+    const internalStatus = determineSubscriptionStatus(
+        payload.expiresDate,
+        payload.autoRenewStatus,
+        payload.isInBillingRetryPeriod,
+        payload.gracePeriodExpiresDate,
+        payload.revocationDate,
+        payload.type
     );
-    
-    if (activeSubscriptions.length === 0) {
-      return {
-        isActive: false,
-        expiresDate: null,
-        type: null,
-        subscriptionId: null
-      };
+
+    if (internalStatus === 'unknown') {
+        logger.warn(`Could not determine internal status via helper for transaction ${payload.transactionId}`);
     }
-    
-    const subscription = activeSubscriptions[0];
-    const now = Math.floor(Date.now() / 1000);
-    
-    // Check if subscription has expired since last verification
-    if (subscription.expiresDate && subscription.expiresDate < now) {
-      // Update subscription to inactive
-      await run(
-        `UPDATE subscriptions 
-         SET isActive = 0, updatedAt = strftime('%s', 'now') 
-         WHERE id = ?`,
-        [subscription.id]
-      );
-      
-      return {
-        isActive: false,
-        expiresDate: subscription.expiresDate,
-        type: subscription.type,
-        subscriptionId: subscription.id
-      };
-    }
-    
-    return {
-      isActive: true,
-      expiresDate: subscription.expiresDate || null,
-      type: subscription.type,
-      subscriptionId: subscription.id
-    };
-  } catch (error) {
-    logger.error(`Error checking subscription status: ${error instanceof Error ? error.message : String(error)}`);
-    // Return false instead of throwing to avoid breaking the app
-    return {
-      isActive: false,
-      expiresDate: null,
-      type: null,
-      subscriptionId: null
-    };
-  }
+
+    return await transaction<Result<void>>(async () => {
+        try {
+            const nowDbTimestamp = Math.floor(Date.now() / 1000);
+            const recordId = payload.originalTransactionId;
+
+            const userCheck = await query<{ id: string }>('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+            if (userCheck.length === 0) {
+                logger.error(`User ${userId} (found via notification mapping) not found in DB. Cannot reliably update subscription ${recordId}.`);
+                throw new Error(`User ${userId} mapping exists, but user record not found for subscription ${recordId}`);
+            }
+
+            await run(`
+                INSERT INTO subscriptions (
+                    id, userId, originalTransactionId, productId, expiresDate, purchaseDate,
+                    status, environment, lastTransactionId, lastTransactionInfo, lastRenewalInfo,
+                    createdAt, updatedAt, appAccountToken, subscriptionGroupIdentifier, offerType, offerIdentifier
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    userId = excluded.userId,
+                    productId = excluded.productId,
+                    expiresDate = excluded.expiresDate,
+                    purchaseDate = CASE WHEN excluded.purchaseDate < purchaseDate THEN excluded.purchaseDate ELSE purchaseDate END,
+                    status = excluded.status,
+                    environment = excluded.environment,
+                    lastTransactionId = CASE WHEN excluded.updatedAt >= updatedAt THEN excluded.lastTransactionId ELSE lastTransactionId END,
+                    lastTransactionInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastTransactionInfo IS NOT NULL THEN excluded.lastTransactionInfo ELSE lastTransactionInfo END,
+                    lastRenewalInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastRenewalInfo IS NOT NULL THEN excluded.lastRenewalInfo ELSE lastRenewalInfo END,
+                    updatedAt = excluded.updatedAt,
+                    appAccountToken = COALESCE(excluded.appAccountToken, appAccountToken),
+                    subscriptionGroupIdentifier = COALESCE(excluded.subscriptionGroupIdentifier, subscriptionGroupIdentifier),
+                    offerType = COALESCE(excluded.offerType, offerType),
+                    offerIdentifier = COALESCE(excluded.offerIdentifier, offerIdentifier)
+                WHERE
+                    TRUE
+            `, [
+                recordId, userId, payload.originalTransactionId, payload.productId,
+                expiresSec,
+                Math.floor(payload.purchaseDate / 1000),
+                internalStatus,
+                payload.environment, payload.transactionId,
+                transactionJson,
+                renewalJson,
+                Math.floor(payload.purchaseDate / 1000),
+                nowDbTimestamp,
+                payload.appAccountToken || null,
+                payload.subscriptionGroupIdentifier || null,
+                payload.offerType ?? null,
+                payload.offerIdentifier || null
+            ]);
+
+            logger.info(`Successfully updated subscription record via notification for user ${userId}, original transaction ID: ${payload.originalTransactionId}, status: ${internalStatus}`);
+            return { success: true, data: undefined };
+
+        } catch (error) {
+            logger.error(`Database error updating subscription from notification for user ${userId}, originalTransactionId ${payload.originalTransactionId}: ${formatError(error)}`);
+            throw error;
+        }
+    }).catch((error): Result<void> => {
+         logger.error(`Transaction failed for updateSubscriptionFromNotification (User: ${userId}, OrigTxID: ${payload.originalTransactionId}): ${formatError(error)}`);
+         return { success: false, error: error instanceof Error ? error : new Error('Failed to update subscription in database transaction') };
+    });
 };
 
-/**
- * Verify receipt and save subscription
- */
-export const verifyAndSaveSubscription = async (
-  userId: string,
-  receiptData: string
-): Promise<{
-  isValid: boolean;
-  expiresDate: number | null;
-  type: string | null;
-  error?: string;
-}> => {
-  try {
-    // Verify the receipt with Apple
-    const verificationResult = await verifyAppleReceipt(receiptData);
-    
-    if (!verificationResult.isValid) {
-      return {
-        isValid: false,
-        expiresDate: null,
-        type: null,
-        error: verificationResult.error || 'Invalid receipt'
-      };
+export const hasActiveSubscription = async (userId: string): Promise<ActiveSubscriptionStatus> => {
+    logger.debug(`Checking active subscription status for user ${userId}`);
+    try {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const results = await query<SubscriptionRecord>(
+             `SELECT id, expiresDate, productId, status FROM subscriptions
+              WHERE userId = ? AND status IN ('active', 'grace_period') AND (expiresDate IS NULL OR expiresDate > ?)
+              ORDER BY expiresDate DESC NULLS LAST LIMIT 1`,
+             [userId, nowSec]
+         );
+
+        if (results.length > 0) {
+            const sub = results[0];
+            const expiresMs = sub.expiresDate ? sub.expiresDate * 1000 : null;
+            logger.info(`User ${userId} has an active subscription: ${sub.productId}, Expires: ${expiresMs ? new Date(expiresMs).toISOString() : 'Never'}, Status: ${sub.status}`);
+            return {
+                isActive: true,
+                expiresDate: expiresMs,
+                type: sub.productId,
+                subscriptionId: sub.id
+            };
+        } else {
+             logger.info(`User ${userId} does not have an active subscription.`);
+             return { isActive: false };
+        }
+    } catch (error) {
+         logger.error(`Database error checking subscription status for user ${userId}: ${formatError(error)}`);
+         return { isActive: false };
     }
-    
-    // Save/update subscription in database
-    await saveSubscription(userId, receiptData, verificationResult);
-    
-    return {
-      isValid: verificationResult.isValid,
-      expiresDate: verificationResult.expiresDate,
-      type: verificationResult.type
-    };
-  } catch (error) {
-    logger.error(`Error verifying and saving subscription: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      isValid: false,
-      expiresDate: null,
-      type: null,
-      error: error instanceof Error ? error.message : String(error)
-    };
+};
+
+const determineSubscriptionStatus = (
+  expiresDateMs: number | null | undefined,
+  autoRenewStatus?: number,
+  isInBillingRetryPeriod?: boolean,
+  gracePeriodExpiresDateMs?: number | null | undefined,
+  revocationDateMs?: number | null | undefined,
+  subscriptionType?: string
+): string => {
+  const now = Date.now();
+  
+  if (revocationDateMs && revocationDateMs <= now) {
+    return 'revoked';
   }
+  
+  if (isInBillingRetryPeriod) {
+    return 'billing_retry';
+  }
+  
+  if (gracePeriodExpiresDateMs && gracePeriodExpiresDateMs > now) {
+    return 'grace_period';
+  }
+  
+  if (!expiresDateMs && subscriptionType && (subscriptionType === 'Non-Consumable' || subscriptionType === 'Non-Renewing Subscription')) {
+    return 'active';
+  }
+  
+  if (!expiresDateMs) {
+    logger.warn(`Cannot determine status: expiresDate is missing and type is not Non-Consumable/Non-Renewing.`);
+    return 'unknown';
+  }
+  
+  if (expiresDateMs > now) {
+    return 'active';
+  }
+  
+  if (autoRenewStatus === 0) {
+    return 'cancelled';
+  }
+  
+  return 'expired';
 };

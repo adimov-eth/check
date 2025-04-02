@@ -1,8 +1,9 @@
-import { logger } from '@/utils/logger';
+import type { Result } from '@/types/common';
+import { verifyAppleToken } from '@/utils/apple-auth';
 import { formatError } from '@/utils/error-formatter';
+import { logger } from '@/utils/logger';
 import { query, run, transaction } from '../database';
 import type { User } from '../types';
-import type { Result } from '@/types/common';
 
 /**
  * Get a user by ID
@@ -101,17 +102,82 @@ export const deleteUser = async (id: string): Promise<Result<void>> => {
 };
 
 /**
- * Send a welcome email to a new user
+ * Send a welcome email to a new user (Placeholder)
  * @param userId User ID to send welcome email to
  * @param email Email address to send to
  * @returns Result object indicating success or failure
  */
 export const sendWelcomeEmail = async (userId: string, email: string): Promise<Result<void>> => {
+  // --- Placeholder Implementation ---
+  // In a real application, this would integrate with an email service
+  // (e.g., SendGrid, Mailgun, AWS SES) to send a formatted welcome email.
   try {
-    logger.info(`Welcome email queued for user ${userId} ${email}`);
+    logger.info(`[Placeholder] Welcome email would be sent to user ${userId} at ${email}`);
+    // Example: await emailService.send({ to: email, template: 'welcome', context: { userId } });
     return { success: true, data: undefined };
   } catch (error) {
-    logger.error(`Error queueing welcome email: ${formatError(error)}`);
-    return { success: false, error: error instanceof Error ? error : new Error(String(error)) };
+    logger.error(`[Placeholder] Error queueing welcome email for ${userId}: ${formatError(error)}`);
+    // If using a real service, return the actual error
+    return { success: false, error: new Error('Failed to queue welcome email (Placeholder)') };
+  }
+  // --- End Placeholder ---
+};
+
+/**
+ * Authenticate with Apple ID token
+ * @param identityToken The ID token from Apple Sign In
+ * @param name Optional user name provided by Apple (only on first sign-in)
+ * @returns Result object with user data if authentication is successful
+ */
+export const authenticateWithApple = async (
+  identityToken: string,
+  name?: string
+): Promise<Result<User>> => {
+  try {
+    // Verify Apple token
+    const verificationResult = await verifyAppleToken(identityToken);
+    if (!verificationResult.success) {
+      logger.error(`Apple token verification failed: ${verificationResult.error.message}`);
+      return { success: false, error: verificationResult.error };
+    }
+
+    const { userId, email } = verificationResult.data;
+    
+    if (!email) {
+      logger.error(`Apple authentication failed: No email provided in token`);
+      return { 
+        success: false, 
+        error: new Error('Authentication requires an email address') 
+      };
+    }
+
+    // Create or update user record
+    const upsertResult = await upsertUser({
+      id: `apple:${userId}`, // Prefix with 'apple:' to distinguish from other auth methods
+      email,
+      name
+    });
+
+    if (!upsertResult.success) {
+      return { success: false, error: upsertResult.error };
+    }
+
+    // Fetch the user to return
+    const user = await getUser(`apple:${userId}`);
+    if (!user) {
+      return { 
+        success: false, 
+        error: new Error('Failed to create or retrieve user account') 
+      };
+    }
+
+    logger.info(`User authenticated with Apple: ${user.id}`);
+    return { success: true, data: user };
+  } catch (error) {
+    logger.error(`Error in Apple authentication: ${formatError(error)}`);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error : new Error(String(error)) 
+    };
   }
 };
