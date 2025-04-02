@@ -5,7 +5,7 @@ export const config = {
     port: Number(process.env.PORT) || 3001,
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     appleSharedSecret: process.env.APPLE_SHARED_SECRET || '',
-    appleBundleId: process.env.APPLE_BUNDLE_ID || 'com.yourcompany.yourapp',
+    appleBundleId: process.env.APPLE_BUNDLE_ID || 'com.three30.vibecheck',
     nodeEnv: process.env.NODE_ENV || 'development',
     
     // Redis configuration
