@@ -6,6 +6,8 @@ export const config = {
     openaiApiKey: process.env.OPENAI_API_KEY || '',
     appleSharedSecret: process.env.APPLE_SHARED_SECRET || '',
     appleBundleId: process.env.APPLE_BUNDLE_ID || 'com.three30.vibecheck',
+    // Add array of valid bundle IDs for Apple Sign In
+    validAppleBundleIds: ['com.three30.vibecheck', 'host.exp.Exponent'],
     nodeEnv: process.env.NODE_ENV || 'development',
     
     // Redis configuration

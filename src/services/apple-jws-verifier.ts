@@ -98,54 +98,73 @@ export const verifyAppleIdentityTokenJws = async (identityToken: string): Promis
     try {
         const jwkSet = await getAppleJWKSet();
 
-        const { payload } = await jwtVerify(identityToken, jwkSet, {
-            issuer: 'https://appleid.apple.com',
-            audience: config.appleBundleId, // Verify audience matches our app's bundle ID
-            // Default clock tolerance is used for exp/nbf checks
-        });
-
-        // --- Specific Payload Validations for Identity Token ---
-
-        // 1. Check if 'sub' (user identifier) exists - crucial for identity tokens
-        if (!payload.sub || typeof payload.sub !== 'string') {
-             throw new Error('Verified payload is missing required "sub" (subject) claim.');
+        // First try with the primary bundle ID
+        try {
+            const { payload } = await jwtVerify(identityToken, jwkSet, {
+                issuer: 'https://appleid.apple.com',
+                audience: config.appleBundleId,
+            });
+            return handleSuccessfulVerification(payload);
+        } catch (primaryError) {
+            // If primary bundle ID fails, try other valid bundle IDs
+            for (const bundleId of config.validAppleBundleIds) {
+                if (bundleId === config.appleBundleId) continue; // Skip primary, already tried
+                try {
+                    const { payload } = await jwtVerify(identityToken, jwkSet, {
+                        issuer: 'https://appleid.apple.com',
+                        audience: bundleId,
+                    });
+                    return handleSuccessfulVerification(payload);
+                } catch {
+                    // Continue to next bundle ID
+                    continue;
+                }
+            }
+            // If we get here, no bundle IDs worked
+            throw primaryError; // Throw the original error
         }
-
-        // Note: Email and name are often only present on the *first* sign-in token.
-        // Their absence is not necessarily an error after the first time.
-
-        logger.info(`Successfully verified Apple identity token JWS for user sub: ${payload.sub}`);
-
-        // Cast to the specific payload type for the return value
-        const identityPayload = payload as IdentityTokenVerificationResult['payload'];
-
-        return {
-            isValid: true,
-            payload: identityPayload,
-        };
-
-    } catch (error: unknown) {
+    } catch (error) {
         const errorMessage = formatError(error);
         // Log specific jose errors if available
         if (error instanceof Error) {
-             if (error.name === 'JWSSignatureVerificationFailed') {
+            if (error.name === 'JWSSignatureVerificationFailed') {
                 logger.error(`Apple Identity Token JWS verification failed: Invalid Signature. ${errorMessage}`);
-             } else if (error.name === 'JWKSetNoMatchingKey') {
-                  logger.error(`Apple Identity Token JWS verification failed: No matching key found in JWKSet. ${errorMessage}`);
-             } else if (error.name === 'JWTExpired') {
-                  logger.error(`Apple Identity Token JWS verification failed: Token expired. ${errorMessage}`);
-             } else if (error.name === 'JWTClaimValidationFailed') {
-                  logger.error(`Apple Identity Token JWS verification failed: Claim validation failed (e.g., iss, aud). ${errorMessage}`);
-             } else {
-                 logger.error(`Apple Identity Token JWS verification failed: ${errorMessage}`);
-             }
+            } else if (error.name === 'JWKSetNoMatchingKey') {
+                logger.error(`Apple Identity Token JWS verification failed: No matching key found in JWKSet. ${errorMessage}`);
+            } else if (error.name === 'JWTExpired') {
+                logger.error(`Apple Identity Token JWS verification failed: Token expired. ${errorMessage}`);
+            } else if (error.name === 'JWTClaimValidationFailed') {
+                logger.error(`Apple Identity Token JWS verification failed: Claim validation failed (e.g., iss, aud). ${errorMessage}`);
+            } else {
+                logger.error(`Apple Identity Token JWS verification failed: ${errorMessage}`);
+            }
         } else {
-             logger.error(`Apple Identity Token JWS verification failed: ${errorMessage}`);
+            logger.error(`Apple Identity Token JWS verification failed: ${errorMessage}`);
         }
         return { isValid: false, error: errorMessage };
     }
 };
 
+// Helper function to handle successful verification
+function handleSuccessfulVerification(payload: JWTPayload): IdentityTokenVerificationResult {
+    // Check if 'sub' (user identifier) exists - crucial for identity tokens
+    if (!payload.sub || typeof payload.sub !== 'string') {
+        throw new Error('Verified payload is missing required "sub" (subject) claim.');
+    }
+
+    // Note: Email and name are often only present on the *first* sign-in token.
+    // Their absence is not necessarily an error after the first time.
+
+    logger.info(`Successfully verified Apple identity token JWS for user sub: ${payload.sub}`);
+
+    // Cast to the specific payload type for the return value
+    const identityPayload = payload as IdentityTokenVerificationResult['payload'];
+
+    return {
+        isValid: true,
+        payload: identityPayload,
+    };
+}
 
 /**
  * Verifies signed data from App Store Server Notifications or /verifyReceipt endpoint.
