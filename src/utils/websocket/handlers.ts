@@ -47,8 +47,10 @@ async function handleSubscribe(ws: WebSocketClient, data: SubscribeMessage): Pro
     if (!ws.userId) return; // Should not happen if called correctly
 
     const topic = data.topic;
+    // Log subscription attempt
+    logger.info(`Client ${ws.userId} attempting to subscribe to ${topic}`);
     ws.subscribedTopics.add(topic);
-    logger.info(`Client ${ws.userId} subscribed to ${topic}`);
+    logger.info(`Client ${ws.userId} successfully subscribed to ${topic}`);
 
     const key = `ws:buffer:${ws.userId}:${topic}`;
     const bufferCount = await redisClient.lLen(key) || 0;
@@ -64,7 +66,13 @@ async function handleSubscribe(ws: WebSocketClient, data: SubscribeMessage): Pro
     }));
 
     // Send any buffered messages for this topic
-    sendBufferedMessages(ws, topic);
+    // Log before sending buffered messages
+    logger.info(`Client ${ws.userId} subscribed to ${topic}. Checking for buffered messages (Count: ${bufferCount})...`);
+    if (bufferCount > 0) {
+      sendBufferedMessages(ws, topic);
+    } else {
+      logger.debug(`No buffered messages to send for ${topic} to user ${ws.userId}.`);
+    }
 }
 
 function handleUnsubscribe(ws: WebSocketClient, data: UnsubscribeMessage): void {

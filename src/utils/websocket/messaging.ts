@@ -16,56 +16,81 @@ export async function sendBufferedMessages(ws: WebSocketClient, topic: string): 
         return;
     }
     const key = `ws:buffer:${ws.userId}:${topic}`;
+    logger.info(`[sendBufferedMessages] User ${ws.userId} checking Redis buffer: ${key}`);
+
     try {
         const messages = await redisClient.lRange(key, 0, -1);
         if (messages.length === 0) {
-            logger.debug(`No buffered messages found for ${key}`);
+            logger.info(`[sendBufferedMessages] No buffered messages found in Redis for ${key}`);
             return;
         }
+
+        logger.info(`[sendBufferedMessages] Found ${messages.length} raw messages in Redis for ${key}. Processing...`);
 
         const now = Date.now();
         let sentCount = 0;
         let skippedCount = 0;
         let expiredCount = 0;
+        let parseErrorCount = 0;
         const messagesToSend: WebSocketMessage[] = [];
 
         for (const msgString of messages) {
             try {
                 const msg = JSON.parse(msgString);
+                if (!msg.data || !msg.timestamp) {
+                    logger.warn(`[sendBufferedMessages] Parsed message from ${key} is missing 'data' or 'timestamp'. Skipping.`);
+                    parseErrorCount++;
+                    continue;
+                }
                 if ((now - msg.timestamp) < MESSAGE_EXPIRY_MS) {
                     messagesToSend.push(msg.data as WebSocketMessage);
                 } else {
                     expiredCount++;
                 }
             } catch (parseError) {
-                logger.error(`Failed to parse buffered message from Redis (${key}): ${parseError}`);
+                logger.error(`[sendBufferedMessages] Failed to parse buffered message from Redis (${key}): ${parseError}. Raw: ${msgString.substring(0,100)}...`);
+                parseErrorCount++;
             }
         }
 
-        logger.info(`Processing ${messagesToSend.length} non-expired buffered messages for ${key} (${expiredCount} expired)`);
+        logger.info(`[sendBufferedMessages] Processing ${messagesToSend.length} valid, non-expired messages for ${key} (Expired: ${expiredCount}, Parse Errors: ${parseErrorCount})`);
 
         for (const msgData of messagesToSend) {
+            logger.debug(`[sendBufferedMessages] Sending buffered message type ${msgData.type} to user ${ws.userId} for topic ${topic}`);
             if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(msgData));
-                sentCount++;
+                try {
+                    ws.send(JSON.stringify(msgData));
+                    sentCount++;
+                } catch (sendError) {
+                    logger.error(`[sendBufferedMessages] Error sending buffered message type ${msgData.type} to ${ws.userId}: ${sendError}`);
+                    skippedCount++;
+                }
             } else {
                 skippedCount++;
+                logger.warn(`[sendBufferedMessages] Client ${ws.userId} readyState is ${ws.readyState} while sending buffered messages. Skipping message type ${msgData.type}.`);
                 if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-                    logger.warn(`Client ${ws.userId} connection closed while sending buffered messages. Stopping.`);
-                    break; // Stop sending if client disconnected
+                    logger.warn(`[sendBufferedMessages] Client ${ws.userId} connection closed while sending buffered messages. Stopping delivery for this client.`);
+                    break;
                 }
             }
         }
 
-        if (messagesToSend.length > 0 || expiredCount > 0) {
-            await redisClient.del(key); // Clear buffer after processing
-            logger.info(`Cleared Redis buffer ${key} after processing.`);
+        if (messagesToSend.length > 0 || expiredCount > 0 || parseErrorCount > 0) {
+            logger.info(`[sendBufferedMessages] Attempting to clear Redis buffer ${key} after processing.`);
+            try {
+                await redisClient.del(key);
+                logger.info(`[sendBufferedMessages] Successfully cleared Redis buffer ${key}.`);
+            } catch (delError) {
+                logger.error(`[sendBufferedMessages] Failed to clear Redis buffer ${key}: ${delError}`);
+            }
+        } else {
+            logger.info(`[sendBufferedMessages] No messages processed, expired, or failed parsing for ${key}. Buffer not cleared.`);
         }
 
-        logger.info(`Buffered message delivery report for user ${ws.userId}, topic ${topic}: Sent: ${sentCount}, Skipped: ${skippedCount}, Expired: ${expiredCount}, Total Buffered: ${messages.length}`);
+        logger.info(`[sendBufferedMessages] Delivery report for ${key}: Sent: ${sentCount}, Skipped(Closed/Error): ${skippedCount}, Expired: ${expiredCount}, Parse Errors: ${parseErrorCount}, Total Raw: ${messages.length}`);
 
     } catch (redisError) {
-        logger.error(`Redis error fetching/processing buffered messages for ${key}: ${redisError}`);
+        logger.error(`[sendBufferedMessages] Redis error fetching/processing buffered messages for ${key}: ${redisError}`);
     }
 }
 
