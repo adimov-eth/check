@@ -35,7 +35,7 @@ export const config = {
     
     // Free tier limits
     freeTier: {
-      weeklyConversationLimit: 10, // 10 free conversations per week
+      weeklyConversationLimit: 100, // 10 free conversations per week
     },
   };
 
