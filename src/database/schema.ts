@@ -49,27 +49,5 @@ export const initSchema = async (): Promise<void> => {
     CREATE INDEX IF NOT EXISTS idx_audios_status ON audios(status);
   `);
 
-  await pool.run(`
-    CREATE TABLE IF NOT EXISTS subscriptions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId TEXT NOT NULL,
-      productId TEXT NOT NULL,
-      type TEXT NOT NULL,
-      originalTransactionId TEXT NOT NULL,
-      transactionId TEXT NOT NULL,
-      receiptData TEXT NOT NULL,
-      environment TEXT NOT NULL,
-      isActive INTEGER NOT NULL DEFAULT 0,
-      expiresDate INTEGER,
-      purchaseDate INTEGER NOT NULL,
-      lastVerifiedDate INTEGER NOT NULL,
-      createdAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      updatedAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
-      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_subscriptions_userId ON subscriptions(userId);
-    CREATE INDEX IF NOT EXISTS idx_subscriptions_isActive ON subscriptions(isActive);
-  `);
-  
   logger.info('Database schema initialized');
 };
