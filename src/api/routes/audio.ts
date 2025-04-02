@@ -8,6 +8,7 @@ import {
   updateAudioStatus
 } from '@/services/audio-service';
 import { getConversationById } from '@/services/conversation-service';
+import type { AuthenticatedRequest } from '@/types/common';
 import { saveFile } from '@/utils/file';
 import { logger } from '@/utils/logger';
 import type { NextFunction, Request, Response } from 'express';
@@ -54,7 +55,7 @@ router.post(
   upload.single('audio'),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const userId = req.auth?.userId;
+      const userId = (req as AuthenticatedRequest).userId;
       if (!userId) {
         throw new AuthenticationError('Unauthorized: No user ID found');
       }
@@ -114,7 +115,7 @@ router.post(
 // Get audio by ID
 router.get('/:id', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.auth?.userId;
+    const userId = (req as AuthenticatedRequest).userId;
     if (!userId) {
       throw new AuthenticationError('Unauthorized: No user ID found');
     }
@@ -134,7 +135,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction): Prom
 // Get all audios for a conversation
 router.get('/conversation/:conversationId', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.auth?.userId;
+    const userId = (req as AuthenticatedRequest).userId;
     if (!userId) {
       throw new AuthenticationError('Unauthorized: No user ID found');
     }
@@ -158,7 +159,7 @@ router.get('/conversation/:conversationId', async (req: Request, res: Response, 
 // Update audio status
 router.patch('/:id/status', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const userId = req.auth?.userId;
+    const userId = (req as AuthenticatedRequest).userId;
     if (!userId) {
       throw new AuthenticationError('Unauthorized: No user ID found');
     }

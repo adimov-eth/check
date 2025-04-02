@@ -1,6 +1,6 @@
 import { config } from '@/config'; // Your config (e.g., Redis connection)
 import { logger } from '@/utils/logger'; // Your logger utility
-import { websocketManager } from '@/utils/websocket'; // Your WebSocket manager
+import { sendToSubscribedClients } from '@/utils/websocket'; // Import the specific function
 import { Queue, Worker } from 'bullmq';
 
 // Assume this is your notification queue
@@ -16,8 +16,9 @@ const notificationWorker = new Worker(
     const { type, userId, topic, payload, timestamp } = job.data;
 
     try {
-      // Process the job (e.g., send a WebSocket notification)
-      websocketManager.sendToSubscribedClients(userId, topic, {
+      // Updated usage:
+      // Call the imported function directly
+      sendToSubscribedClients(userId, topic, {
         type,
         timestamp,
         payload,

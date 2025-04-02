@@ -1,4 +1,4 @@
-import { authenticate, requireResourceOwnership } from '@/middleware/auth';
+import { requireAuth, requireResourceOwnership } from '@/middleware/auth';
 import { ValidationError } from '@/middleware/error';
 import { conversationsRateLimiter } from '@/middleware/rate-limit';
 import { gptQueue } from '@/queues';
@@ -9,10 +9,10 @@ import {
   updateConversationStatus
 } from '@/services/conversation-service';
 import { canCreateConversation } from '@/services/usage-service';
-import { logger } from '@/utils/logger';
-import { asyncHandler } from '@/utils/async-handler';
+import type { Conversation } from '@/types';
 import type { AuthenticatedRequest, RequestHandler } from '@/types/common';
-import type { Request, Response } from 'express';
+import { asyncHandler } from '@/utils/async-handler';
+import { logger } from '@/utils/logger';
 import { Router } from 'express';
 import { z } from 'zod';
 
@@ -71,9 +71,10 @@ const createNewConversation: RequestHandler = async (req, res) => {
 /**
  * Get a conversation by ID
  */
-const getConversation: RequestHandler = (req, res) => {
-  const { resource: conversation, userId } = req as AuthenticatedRequest;
-  
+const getConversation: RequestHandler = async (req, res) => {
+  const { resource, userId } = req as AuthenticatedRequest;
+  const conversation = resource as Conversation;
+
   logger.debug(`Retrieved conversation: ${req.params.id} for user: ${userId}`);
   return res.status(200).json({ conversation });
 };
@@ -94,7 +95,7 @@ const getAllConversations: RequestHandler = async (req, res) => {
  */
 const processConversation: RequestHandler = async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
-  const conversation = (req as AuthenticatedRequest).resource;
+  const conversation = (req as AuthenticatedRequest).resource as Conversation;
   const conversationId = req.params.id;
 
   if (conversation.status === 'processing') {
@@ -112,9 +113,9 @@ const processConversation: RequestHandler = async (req, res) => {
 };
 
 // Define routes with middleware
-router.post('/', authenticate, asyncHandler(createNewConversation));
-router.get('/:id', authenticate, requireResourceOwnership(getConversationById, 'Conversation'), asyncHandler(getConversation));
-router.get('/', authenticate, asyncHandler(getAllConversations));
-router.post('/:id/process', authenticate, requireResourceOwnership(getConversationById, 'Conversation'), asyncHandler(processConversation));
+router.post('/', requireAuth, asyncHandler(createNewConversation));
+router.get('/:id', requireAuth, requireResourceOwnership(getConversationById, 'Conversation'), asyncHandler(getConversation));
+router.get('/', requireAuth, asyncHandler(getAllConversations));
+router.post('/:id/process', requireAuth, requireResourceOwnership(getConversationById, 'Conversation'), asyncHandler(processConversation));
 
 export default router;

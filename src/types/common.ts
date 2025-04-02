@@ -24,7 +24,7 @@ export type RequestHandler = (
   req: Request | AuthenticatedRequest,
   res: Response,
   next: NextFunction
-) => Promise<unknown> | unknown;
+) => Promise<unknown>;
 
 /**
  * Type for middleware functions

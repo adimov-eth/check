@@ -1,9 +1,9 @@
+import type { AuthenticatedRequest } from '@/types/common';
+import { formatError } from '@/utils/error-formatter';
 import type { NextFunction, Request, Response } from 'express';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { RateLimitError } from './error';
-import { formatError } from '@/utils/error-formatter';
-
 /**
  * Interface for rate limit entry
  */
@@ -102,7 +102,7 @@ export const createRateLimiter = (
     try {
       // Use user ID if available, otherwise IP address
       // Adding path component for more granular limiting
-      const keyBase = req.auth?.userId || req.ip || 'unknown';
+      const keyBase = (req as AuthenticatedRequest).userId || req.ip || 'unknown';
       const key = `${keyBase}:${req.method}:${req.path}`;
       const now = Date.now();
 
