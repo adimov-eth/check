@@ -10,7 +10,7 @@
     "clean-queues": "bun src/scripts/clean-queues.ts",
     "dev": "bun --watch src/index.ts",
     "dev:workers": "bun --watch src/workers/index.ts",
-    "db:init": "bun src/database/schema.ts",
+    "db:migrate": "bun src/scripts/init-db.ts",
     "lint": "eslint src --ext .ts",
     "queue:clean": "bun src/scripts/clean-queues.ts clean",
     "queue:clean:audio": "bun src/scripts/clean-queues.ts clean --audio",

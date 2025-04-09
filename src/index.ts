@@ -1,7 +1,7 @@
 // src/index.ts
 import { app } from '@/api';
 import { config } from '@/config';
-import { initSchema } from '@/database/schema';
+// import { initSchema } from '@/database/schema'; // REMOVE THIS LINE
 import { logger } from '@/utils/logger';
 // Use the correctly exported names from the websocket module
 import { runMigrations } from '@/database/migrations'; // Import the migration runner
@@ -13,12 +13,11 @@ import type { Socket } from 'net';
 // Initialize database schema and required directories
 const startServer = async () => {
   try {
-    // 1. Initialize Schema (creates tables if they don't exist)
-    //    This is still useful for the very first run.
-    await initSchema();
+    // 1. REMOVE Schema Initialization call (now handled by migrations)
+    // await initSchema();
 
-    // 2. Run Migrations (updates existing schema)
-    await runMigrations(); // <<< ADD THIS CALL HERE
+    // 2. Run Migrations (handles schema creation and updates)
+    await runMigrations(); // This now includes initial schema setup
 
     // 3. Start your application server
     const server = createServer(app);
