@@ -53,7 +53,6 @@ app.use('/usage', requireAuth);
 app.use('/audio', ensureUser);
 app.use('/conversations', ensureUser);
 app.use('/subscriptions', ensureUser);
-app.use('/users', ensureUser);
 app.use('/usage', ensureUser);
 
 // Default rate limiter
