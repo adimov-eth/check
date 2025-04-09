@@ -3,7 +3,7 @@ import fs from 'fs';
 import { mkdir, unlink, writeFile } from 'fs/promises';
 import { basename, join, normalize, relative } from 'path';
 import { config } from '../config';
-import { logger } from './logger';
+import { log } from './logger';
 
 interface FileValidationResult {
   isValid: boolean;
@@ -57,9 +57,9 @@ export const saveFile = async (
     // Ensure directory exists
     try {
       await mkdir(config.uploadsDir, { recursive: true });
-      logger.debug(`Uploads directory ensured: ${config.uploadsDir}`);
+      log.debug(`Uploads directory ensured: ${config.uploadsDir}`);
     } catch (dirError) {
-      logger.error(`Failed to create uploads directory: ${dirError instanceof Error ? dirError.message : String(dirError)}`);
+      log.error(`Failed to create uploads directory: ${dirError instanceof Error ? dirError.message : String(dirError)}`);
       throw dirError;
     }
     
@@ -73,14 +73,14 @@ export const saveFile = async (
         throw new Error(`File size mismatch after writing. Expected: ${fileData.length}, Got: ${stats.size}`);
       }
       
-      logger.debug(`File saved successfully: ${filePath} (${stats.size} bytes)`);
+      log.debug(`File saved successfully: ${filePath} (${stats.size} bytes)`);
       return filePath;
     } catch (writeError) {
-      logger.error(`Failed to write file: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
+      log.error(`Failed to write file: ${writeError instanceof Error ? writeError.message : String(writeError)}`);
       throw writeError;
     }
   } catch (error) {
-    logger.error(`Failed to save file: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Failed to save file: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
   }
 };
@@ -95,11 +95,11 @@ export const deleteFile = async (filePath: string): Promise<void> => {
     }
     
     await unlink(filePath);
-    logger.debug(`File deleted: ${filePath}`);
+    log.debug(`File deleted: ${filePath}`);
   } catch (error) {
     // Ignore errors if file doesn't exist
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      logger.warn(`Failed to delete file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      log.warn(`Failed to delete file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 };

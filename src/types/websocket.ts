@@ -15,6 +15,11 @@ export type MessageType =
   | 'subscribe'
   | 'unsubscribe';
 
+export interface BaseWebSocketIncomingMessage {
+  type: MessageType;
+  payload?: WebSocketPayload;
+}
+
 export interface WebSocketMessage {
   type: MessageType;
   timestamp: string;

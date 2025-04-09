@@ -1,8 +1,9 @@
+import type { BaseWebSocketIncomingMessage } from '@/types/websocket';
 import { formatError } from '@/utils/error-formatter';
 import type { IncomingMessage, Server } from 'http';
 import type { Socket } from 'net';
 import { WebSocket, WebSocketServer } from 'ws';
-import { logger } from '../logger';
+import { log } from '../logger';
 import { AUTH_TIMEOUT_MS, handleAuthMessage } from './auth';
 import { handleAuthenticatedMessage } from './handlers';
 import {
@@ -46,7 +47,7 @@ function setupClientListeners(ws: WebSocketClient, req: IncomingMessage, authTim
             try {
                 parsedData = JSON.parse(rawMessage);
             } catch (parseError) {
-                logger.warn(`Received invalid JSON from client (IP: ${clientIp}): ${formatError(parseError)}. Raw: ${rawMessage.substring(0, 100)}... Closing connection.`);
+                log.warn(`Received invalid JSON from client (IP: ${clientIp}): ${formatError(parseError)}. Raw: ${rawMessage.substring(0, 100)}... Closing connection.`);
                  // No cast needed when clearing timeout
                  clearTimeout(authTimeout);
                 ws.close(4000, "Invalid JSON message received");
@@ -55,7 +56,7 @@ function setupClientListeners(ws: WebSocketClient, req: IncomingMessage, authTim
 
              // Check message format early
              if (typeof parsedData !== 'object' || parsedData === null) {
-                logger.warn(`Received non-object message from client (IP: ${clientIp}): ${rawMessage.substring(0, 100)}... Closing connection.`);
+                log.warn(`Received non-object message from client (IP: ${clientIp}): ${rawMessage.substring(0, 100)}... Closing connection.`);
                  // No cast needed when clearing timeout
                  clearTimeout(authTimeout);
                 ws.close(4000, "Invalid message format");
@@ -69,18 +70,23 @@ function setupClientListeners(ws: WebSocketClient, req: IncomingMessage, authTim
                 // If it succeeds, isAuthenticating is set to false.
             } else {
                 // Already authenticated, handle regular messages
-                handleAuthenticatedMessage(ws, parsedData);
+                if (typeof parsedData === 'object' && parsedData !== null && 'type' in parsedData) {
+                    handleAuthenticatedMessage(ws, parsedData as BaseWebSocketIncomingMessage);
+                } else {
+                    log.warn(`Invalid message format from authenticated client: missing 'type' property`);
+                    ws.send(JSON.stringify({ type: 'error', message: 'Invalid message format', timestamp: new Date().toISOString() }));
+                }
             }
         } catch (error) {
-            logger.error(`Error processing message from ${ws.userId || `unauthenticated client (${clientIp})`}: ${formatError(error)}`);
+            log.error(`Error processing message from ${ws.userId || `unauthenticated client (${clientIp})`}: ${formatError(error)}`);
             if (ws.readyState === WebSocket.OPEN && !ws.isAuthenticating) {
                  try {
                      ws.send(JSON.stringify({ type: 'error', message: 'Failed to process your message', timestamp: new Date().toISOString() }));
                  } catch (sendError) {
-                     logger.error(`Failed to send error notification to client ${ws.userId}: ${formatError(sendError)}`);
+                     log.error(`Failed to send error notification to client ${ws.userId}: ${formatError(sendError)}`);
                  }
             } else if (ws.isAuthenticating && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
-                 logger.warn(`Closing connection due to error during authentication message processing for client (IP: ${clientIp})`);
+                 log.warn(`Closing connection due to error during authentication message processing for client (IP: ${clientIp})`);
                  // No cast needed when clearing timeout
                  clearTimeout(authTimeout);
                  ws.close(4000, "Error during authentication processing");
@@ -98,9 +104,9 @@ function setupClientListeners(ws: WebSocketClient, req: IncomingMessage, authTim
 
         if (userId) {
             const remainingCount = removeClientFromUser(userId, ws);
-            logger.info(`WebSocket client disconnected: ${userId} (IP: ${clientIp}), Code: ${code}, Reason: "${reasonString}". Remaining connections for user: ${remainingCount}`);
+            log.info(`WebSocket client disconnected: ${userId} (IP: ${clientIp}), Code: ${code}, Reason: "${reasonString}". Remaining connections for user: ${remainingCount}`);
         } else {
-            logger.info(`Unauthenticated WebSocket client disconnected (IP: ${clientIp}), Code: ${code}, Reason: "${reasonString}"`);
+            log.info(`Unauthenticated WebSocket client disconnected (IP: ${clientIp}), Code: ${code}, Reason: "${reasonString}"`);
         }
     });
 
@@ -108,14 +114,14 @@ function setupClientListeners(ws: WebSocketClient, req: IncomingMessage, authTim
          // No cast needed when clearing timeout
          clearTimeout(authTimeout);
         const userId = ws.userId;
-        logger.error(`WebSocket error for ${userId || `unauthenticated client (${clientIp})`}: ${error.message}`);
+        log.error(`WebSocket error for ${userId || `unauthenticated client (${clientIp})`}: ${error.message}`);
         // Attempt to remove client from map even on error
         if (userId) {
             removeClientFromUser(userId, ws);
         }
         // Ensure termination on error
         if (ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) {
-            logger.warn(`Terminating WebSocket due to error event for ${userId || `unauthenticated client (${clientIp})`}`);
+            log.warn(`Terminating WebSocket due to error event for ${userId || `unauthenticated client (${clientIp})`}`);
             ws.terminate();
         }
     });
@@ -124,7 +130,7 @@ function setupClientListeners(ws: WebSocketClient, req: IncomingMessage, authTim
 function setupConnectionListener(wss: WebSocketServer): void {
     wss.on('connection', (ws: WebSocketClient, req: IncomingMessage) => {
         const clientIp = getClientIp(req); // Use helper function
-        logger.info(`WebSocket client connected (IP: ${clientIp}) - awaiting authentication`);
+        log.info(`WebSocket client connected (IP: ${clientIp}) - awaiting authentication`);
 
         // Initialize client state (already done in handleUpgrade, but good practice here too)
         ws.isAlive = true;
@@ -135,7 +141,7 @@ function setupConnectionListener(wss: WebSocketServer): void {
         // Set authentication timeout - setTimeout returns NodeJS.Timeout
         const authTimeout = setTimeout(() => {
             if (ws.isAuthenticating && !ws.userId) { // Check if still authenticating and no userId assigned
-                logger.warn(`WebSocket client (IP: ${clientIp}) failed to authenticate within ${AUTH_TIMEOUT_MS}ms. Closing connection.`);
+                log.warn(`WebSocket client (IP: ${clientIp}) failed to authenticate within ${AUTH_TIMEOUT_MS}ms. Closing connection.`);
                 ws.close(4008, 'Authentication timed out');
             }
         }, AUTH_TIMEOUT_MS);
@@ -145,18 +151,18 @@ function setupConnectionListener(wss: WebSocketServer): void {
     });
 
     wss.on('error', (error) => {
-        logger.error(`WebSocketServer error: ${error.message}`);
+        log.error(`WebSocketServer error: ${error.message}`);
         // Consider more robust error handling here, e.g., trying to restart
     });
 }
 
 
 function startPingInterval(): void {
-    logger.info(`Starting WebSocket ping interval (${PING_INTERVAL_MS}ms)`);
+    log.info(`Starting WebSocket ping interval (${PING_INTERVAL_MS}ms)`);
     const interval = setInterval(() => {
         const wss = getWss();
         if (!wss) {
-             logger.warn("Ping interval running but WSS is null.");
+             log.warn("Ping interval running but WSS is null.");
              return;
         }
 
@@ -170,7 +176,7 @@ function startPingInterval(): void {
 
             // Check liveliness flag
             if (!client.isAlive) {
-                logger.warn(`Terminating inactive WebSocket for user ${client.userId || 'unknown (error before auth?)'}.`);
+                log.warn(`Terminating inactive WebSocket for user ${client.userId || 'unknown (error before auth?)'}.`);
                 return client.terminate(); // Use terminate for forceful closure
             }
 
@@ -179,7 +185,7 @@ function startPingInterval(): void {
             try {
                 client.ping(); // Send ping
             } catch (pingError) {
-                logger.error(`Error sending ping to client ${client.userId || 'unknown (error before auth?)'}: ${formatError(pingError)}. Terminating.`);
+                log.error(`Error sending ping to client ${client.userId || 'unknown (error before auth?)'}: ${formatError(pingError)}. Terminating.`);
                 client.terminate();
             }
         });
@@ -192,7 +198,7 @@ function stopPingInterval(): void {
     if (interval) {
         clearInterval(interval);
         setPingInterval(null);
-        logger.info('WebSocket ping interval stopped.');
+        log.info('WebSocket ping interval stopped.');
     }
 }
 
@@ -201,13 +207,13 @@ function stopPingInterval(): void {
 export function initialize(server: Server, path = '/ws'): void {
     const currentWss = getWss();
     if (currentWss) {
-        logger.warn("WebSocket server already initialized. Shutting down existing instance before re-initializing.");
+        log.warn("WebSocket server already initialized. Shutting down existing instance before re-initializing.");
         shutdown(); // Ensure cleanup before re-initializing
     }
 
     const newWss = new WebSocketServer({ noServer: true });
     setWss(newWss);
-    logger.info(`WebSocket server instance created, path: ${path}`);
+    log.info(`WebSocket server instance created, path: ${path}`);
 
     setupConnectionListener(newWss);
     startPingInterval();
@@ -216,7 +222,7 @@ export function initialize(server: Server, path = '/ws'): void {
 export function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
     const wss = getWss();
     if (!wss) {
-        logger.error('WebSocket Server not initialized during handleUpgrade.');
+        log.error('WebSocket Server not initialized during handleUpgrade.');
         socket.destroy();
         return;
     }
@@ -228,13 +234,13 @@ export function handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer
         client.isAuthenticating = true;
         client.userId = undefined;
         const clientIp = getClientIp(req); // Use helper
-        logger.debug(`WebSocket upgrade successful for IP: ${clientIp}`);
+        log.debug(`WebSocket upgrade successful for IP: ${clientIp}`);
         wss.emit('connection', client, req); // Emit connection event for the listener
     });
 }
 
 export function shutdown(): void {
-    logger.info('Shutting down WebSocket Manager...');
+    log.info('Shutting down WebSocket Manager...');
     stopPingInterval();
 
     const wss = getWss();
@@ -242,13 +248,13 @@ export function shutdown(): void {
         // Close connections gracefully first
         wss.clients.forEach(ws => {
             if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-                try { ws.close(1001, 'Server shutting down'); } catch (e) { logger.error(`Error closing client: ${formatError(e)}`); }
+                try { ws.close(1001, 'Server shutting down'); } catch (e) { log.error(`Error closing client: ${formatError(e)}`); }
             }
         });
 
         // Terminate any remaining connections after a short delay
         const terminationTimeout = setTimeout(() => {
-             logger.warn("Forcibly terminating remaining WebSocket clients after shutdown delay.");
+             log.warn("Forcibly terminating remaining WebSocket clients after shutdown delay.");
              wss.clients.forEach(ws => {
                   if (ws.readyState !== WebSocket.CLOSED) {
                      ws.terminate();
@@ -260,14 +266,14 @@ export function shutdown(): void {
         wss.close((err) => {
             clearTimeout(terminationTimeout); // Cancel termination if close completes quickly
             if (err) {
-                logger.error(`Error closing WebSocket Server: ${err.message}`);
+                log.error(`Error closing WebSocket Server: ${err.message}`);
             } else {
-                logger.info('WebSocket Server closed.');
+                log.info('WebSocket Server closed.');
             }
         });
         setWss(null);
     } else {
-        logger.info('WebSocket Server was not running.');
+        log.info('WebSocket Server was not running.');
     }
 
     clearAllClients(); // Clear the client map

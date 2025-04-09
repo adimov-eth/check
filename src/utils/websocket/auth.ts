@@ -1,7 +1,7 @@
 import type { Result } from '@/types/common';
 import { verifyAppleToken } from '../apple-auth';
 import { cacheAppleAuthResult, getCachedAppleAuth } from '../apple-auth-cache';
-import { logger } from '../logger';
+import { log } from '../logger';
 import { addClientToUser, getClientsByUserId, getWss, type WebSocketClient } from './state';
 
 export const AUTH_TIMEOUT_MS = 10 * 1000; // 10 seconds
@@ -31,11 +31,11 @@ function isAuthMessage(data: unknown): data is AuthMessage {
 async function performAuthentication(token: string, clientIp: string): Promise<Result<{ userId: string }, Error>> {
     const cachedResult = await getCachedAppleAuth(token);
     if (cachedResult) {
-        logger.debug(`Using cached auth for client (IP: ${clientIp})`);
+        log.debug(`Using cached auth for client (IP: ${clientIp})`);
         return cachedResult;
     }
 
-    logger.debug(`Verifying token with Apple for client (IP: ${clientIp})`);
+    log.debug(`Verifying token with Apple for client (IP: ${clientIp})`);
     const verificationResult = await verifyAppleToken(token);
     await cacheAppleAuthResult(token, verificationResult);
 
@@ -58,7 +58,7 @@ export async function handleAuthMessage(
     if (!isAuthMessage(data)) {
         // Use the base interface type for logging unknown types
         const unknownType = (data as BaseWebSocketIncomingMessage)?.type || 'unknown';
-        logger.warn(`Received invalid/unexpected message during authentication phase from client (IP: ${clientIp}). Type: ${String(unknownType)}. Closing.`);
+        log.warn(`Received invalid/unexpected message during authentication phase from client (IP: ${clientIp}). Type: ${String(unknownType)}. Closing.`);
         ws.close(4002, 'Invalid or unexpected authentication message');
         return false;
     }
@@ -77,7 +77,7 @@ export async function handleAuthMessage(
         const userConnectionCount = userClientSet?.size ?? 0; // Count for THIS user
         const totalServerConnections = wssInstance?.clients.size ?? 0; // Total server connections
 
-        logger.info(`WebSocket client authenticated: ${authenticatedUserId} (IP: ${clientIp}), user connections: ${userConnectionCount}, total server connections: ${totalServerConnections}`);
+        log.info(`WebSocket client authenticated: ${authenticatedUserId} (IP: ${clientIp}), user connections: ${userConnectionCount}, total server connections: ${totalServerConnections}`);
 
         ws.send(JSON.stringify({ type: 'auth_success', userId: authenticatedUserId, timestamp: new Date().toISOString() }));
         ws.send(JSON.stringify({
@@ -91,7 +91,7 @@ export async function handleAuthMessage(
         }));
         return true;
     } else {
-        logger.warn(`WebSocket authentication failed for client (IP: ${clientIp}): ${authResult.error?.message || 'Unknown error during verification'}`);
+        log.warn(`WebSocket authentication failed for client (IP: ${clientIp}): ${authResult.error?.message || 'Unknown error during verification'}`);
         ws.close(4001, 'Authentication failed');
         return false;
     }

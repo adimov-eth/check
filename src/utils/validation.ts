@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import type { ZodSchema } from 'zod';
 import { ZodError } from 'zod';
 import { formatError } from './error-formatter';
-import { logger } from './logger';
+import { log } from './logger';
 
 /**
  * Location of data to validate
@@ -82,12 +82,12 @@ export const validateRequest = (
           .map(err => `${err.path}: ${err.message}`)
           .join('; ');
         
-        logger.debug(`Validation error: ${errorMessage}`);
+        log.debug(`Validation error: ${errorMessage}`);
         
         // Use our ValidationError for consistent error handling
         next(new ValidationError(`Validation failed: ${errorMessage}`));
       } else {
-        logger.error(`Unexpected validation error: ${formatError(error)}`);
+        log.error(`Unexpected validation error: ${formatError(error)}`);
         next(error);
       }
     }

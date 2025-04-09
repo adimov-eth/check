@@ -1,12 +1,7 @@
-import type { MessageType, WebSocketPayload } from '@/types/websocket';
+import type { BaseWebSocketIncomingMessage } from '@/types/websocket';
 import { log } from '@/utils/logger';
 import { sendBufferedMessages } from './messaging';
 import type { WebSocketClient } from './state';
-
-interface BaseWebSocketIncomingMessage {
-  type: MessageType;
-  payload?: WebSocketPayload;
-}
 
 // Handle subscription request
 async function handleSubscription(ws: WebSocketClient, topic: string): Promise<void> {
