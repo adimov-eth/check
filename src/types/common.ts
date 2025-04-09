@@ -72,4 +72,4 @@ export enum ErrorCode {
  */
 export type Result<T, E = Error> = 
   | { success: true; data: T }
-  | { success: false; error: E };
+  | { success: false; error: E; code?: string };

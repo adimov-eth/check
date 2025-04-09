@@ -1,3 +1,5 @@
+// server/src/services/user-service.ts
+
 import type { Result } from '@/types/common';
 import { verifyAppleToken } from '@/utils/apple-auth';
 import { formatError } from '@/utils/error-formatter';
@@ -25,14 +27,14 @@ export const getUser = async (id: string): Promise<User | null> => {
  * @param params User data to create or update
  * @returns Result object indicating success or failure
  */
-export const upsertUser = async ({ 
-  id, 
-  email, 
-  name 
-}: { 
-  id: string, 
-  email: string, 
-  name?: string 
+export const upsertUser = async ({
+  id,
+  email,
+  name
+}: {
+  id: string,
+  email: string,
+  name?: string
 }): Promise<Result<void>> => {
   return await transaction(async () => {
     try {
@@ -41,24 +43,24 @@ export const upsertUser = async ({
         'SELECT * FROM users WHERE email = ? AND id != ? LIMIT 1',
         [email, id]
       );
-      
+
       if (existingUsers[0]) {
         logger.warn(`Email ${email} is already in use by another user`);
-        return { 
-          success: false, 
-          error: new Error(`Email ${email} is already in use by another user`) 
+        return {
+          success: false,
+          error: new Error(`Email ${email} is already in use by another user`)
         };
       }
-      
+
       await run(`
-        INSERT INTO users (id, email, name) 
+        INSERT INTO users (id, email, name)
         VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET 
+        ON CONFLICT(id) DO UPDATE SET
           email = excluded.email,
           name = excluded.name,
           updatedAt = strftime('%s', 'now')
       `, [id, email, name ?? null]);
-      
+
       logger.info(`User ${id} upserted successfully`);
       return { success: true, data: undefined };
     } catch (error) {
@@ -81,15 +83,15 @@ export const deleteUser = async (id: string): Promise<Result<void>> => {
         'SELECT 1 as exists FROM users WHERE id = ? LIMIT 1',
         [id]
       );
-      
+
       const userExists = userExistsResult[0]?.exists === 1;
-      
+
       if (!userExists) {
         // User doesn't exist - no need to delete, just log and return
         logger.info(`Delete requested for user ${id} but user not found in database - skipping delete`);
         return { success: true, data: undefined };
       }
-      
+
       // Delete user and all related data will be cascaded due to foreign key constraints
       await run('DELETE FROM users WHERE id = ?', [id]);
       logger.info(`User ${id} deleted successfully`);
@@ -166,21 +168,14 @@ export const authenticateWithApple = async (
 
     if (existingUserWithEmail && existingUserWithEmail.id !== appleId) {
       // Email is already associated with a different user.
-      // Link the Apple ID to the existing user.
-      logger.info(`Email ${email} already exists. Linking Apple ID ${appleId} to user ${existingUserWithEmail.id}`);
-      await run(
-        `UPDATE users SET id = ? WHERE id = ?`,
-        [appleId, existingUserWithEmail.id]
-      );
-      const updatedUser = await getUser(appleId);
-      if (!updatedUser) {
-        return {
-          success: false,
-          error: new Error('Failed to update user')
-        };
-      }
-      logger.info(`User authenticated with Apple, linked to existing account: ${updatedUser.id}`);
-      return { success: true, data: updatedUser };
+      // Don't link the accounts automatically.  Return an error that the
+      // client can handle.
+      logger.warn(`Email ${email} already exists. Apple ID ${appleId} cannot be linked to user ${existingUserWithEmail.id}`);
+      return {
+        success: false,
+        error: new Error(`Email ${email} is already associated with another account. Please sign in with that account and link Apple Sign-In in profile settings.`),
+        code: 'EMAIL_ALREADY_EXISTS'
+      };
 
     } else {
       // No conflicting email, proceed with upsert as before
