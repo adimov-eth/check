@@ -2,7 +2,7 @@ import type { Result } from '@/types/common';
 import { verifyAppleToken } from '@/utils/apple-auth';
 import { formatError } from '@/utils/error-formatter';
 import { logger } from '@/utils/logger';
-import { query, run, transaction } from '../database';
+import { query, queryOne, run, transaction } from '../database';
 import type { User } from '../types';
 
 /**
@@ -129,6 +129,12 @@ export const sendWelcomeEmail = async (userId: string, email: string): Promise<R
  * @param name Optional user name provided by Apple (only on first sign-in)
  * @returns Result object with user data if authentication is successful
  */
+/**
+ * Authenticate with Apple ID token
+ * @param identityToken The ID token from Apple Sign In
+ * @param name Optional user name provided by Apple (only on first sign-in)
+ * @returns Result object with user data if authentication is successful
+ */
 export const authenticateWithApple = async (
   identityToken: string,
   name?: string
@@ -142,42 +148,68 @@ export const authenticateWithApple = async (
     }
 
     const { userId, email } = verificationResult.data;
-    
+    const appleId = `apple:${userId}`; // The Apple user ID we're using
+
     if (!email) {
       logger.error(`Apple authentication failed: No email provided in token`);
-      return { 
-        success: false, 
-        error: new Error('Authentication requires an email address') 
+      return {
+        success: false,
+        error: new Error('Authentication requires an email address')
       };
     }
 
-    // Create or update user record
-    const upsertResult = await upsertUser({
-      id: `apple:${userId}`, // Prefix with 'apple:' to distinguish from other auth methods
-      email,
-      name
-    });
+    // Check if the email is already in use by another user.
+    const existingUserWithEmail = await queryOne<User>(
+      'SELECT * FROM users WHERE email = ?',
+      [email]
+    );
 
-    if (!upsertResult.success) {
-      return { success: false, error: upsertResult.error };
+    if (existingUserWithEmail && existingUserWithEmail.id !== appleId) {
+      // Email is already associated with a different user.
+      // Link the Apple ID to the existing user.
+      logger.info(`Email ${email} already exists. Linking Apple ID ${appleId} to user ${existingUserWithEmail.id}`);
+      await run(
+        `UPDATE users SET id = ? WHERE id = ?`,
+        [appleId, existingUserWithEmail.id]
+      );
+      const updatedUser = await getUser(appleId);
+      if (!updatedUser) {
+        return {
+          success: false,
+          error: new Error('Failed to update user')
+        };
+      }
+      logger.info(`User authenticated with Apple, linked to existing account: ${updatedUser.id}`);
+      return { success: true, data: updatedUser };
+
+    } else {
+      // No conflicting email, proceed with upsert as before
+      const upsertResult = await upsertUser({
+        id: appleId,
+        email,
+        name
+      });
+
+      if (!upsertResult.success) {
+        return { success: false, error: upsertResult.error };
+      }
+
+      const user = await getUser(appleId);
+      if (!user) {
+        return {
+          success: false,
+          error: new Error('Failed to create or retrieve user account')
+        };
+      }
+
+      logger.info(`User authenticated with Apple: ${user.id}`);
+      return { success: true, data: user };
     }
-
-    // Fetch the user to return
-    const user = await getUser(`apple:${userId}`);
-    if (!user) {
-      return { 
-        success: false, 
-        error: new Error('Failed to create or retrieve user account') 
-      };
-    }
-
-    logger.info(`User authenticated with Apple: ${user.id}`);
-    return { success: true, data: user };
   } catch (error) {
     logger.error(`Error in Apple authentication: ${formatError(error)}`);
-    return { 
-      success: false, 
-      error: error instanceof Error ? error : new Error(String(error)) 
+    return {
+      success: false,
+      error: error instanceof Error ? error : new Error(String(error))
     };
   }
 };
