@@ -1,6 +1,5 @@
 // src/api/index.ts
 import { requireAuth } from '@/middleware/auth';
-import { ensureUser } from '@/middleware/ensure-user';
 import { handleError } from '@/middleware/error';
 import { apiRateLimiter } from '@/middleware/rate-limit';
 import { log } from '@/utils/logger';
@@ -44,11 +43,6 @@ app.use('/audio', requireAuth);
 app.use('/conversations', requireAuth);
 app.use('/subscriptions', requireAuth);
 app.use('/users', requireAuth);
-
-// Ensure user exists in database - apply to the same routes
-app.use('/audio', ensureUser);
-app.use('/conversations', ensureUser);
-app.use('/subscriptions', ensureUser);
 
 // Default rate limiter
 app.use(apiRateLimiter);

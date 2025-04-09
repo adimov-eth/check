@@ -1,5 +1,4 @@
 import { getUserId, requireAuth } from '@/middleware/auth';
-import { ensureUser } from '@/middleware/ensure-user';
 import { AuthenticationError } from '@/middleware/error';
 import { verifyAppleSignedData } from '@/services/apple-jws-verifier';
 import { hasActiveSubscription, updateSubscriptionFromNotification, verifyAndSaveSubscription } from '@/services/subscription-serivice';
@@ -21,7 +20,7 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   log.debug(`Applying auth middleware`, { method: req.method, path: req.path });
   requireAuth(req, res, (authError) => {
     if (authError) return next(authError);
-    ensureUser(req, res, next);
+    next();
   });
 });
 
