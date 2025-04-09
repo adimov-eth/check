@@ -1,123 +1,61 @@
-import { redisClient } from '@/config';
-import { logger } from '../logger';
+import type { MessageType, WebSocketPayload } from '@/types/websocket';
+import { log } from '@/utils/logger';
 import { sendBufferedMessages } from './messaging';
 import type { WebSocketClient } from './state';
 
-// Base interface for type checking
 interface BaseWebSocketIncomingMessage {
-    type: string;
-    [key: string]: unknown; // Allow other properties
+  type: MessageType;
+  payload?: WebSocketPayload;
 }
 
+// Handle subscription request
+async function handleSubscription(ws: WebSocketClient, topic: string): Promise<void> {
+  if (!ws.userId) {
+    log.warn('Attempted subscription without authentication');
+    return;
+  }
 
-interface SubscribeMessage extends BaseWebSocketIncomingMessage {
-    type: 'subscribe';
-    topic: string;
+  ws.subscribedTopics.add(topic);
+  log.info(`User ${ws.userId} subscribed to topic: ${topic}`);
+  
+  // Send buffered messages for this topic
+  await sendBufferedMessages(ws, topic);
 }
 
-interface UnsubscribeMessage extends BaseWebSocketIncomingMessage {
-    type: 'unsubscribe';
-    topic: string;
+// Handle unsubscription request
+function handleUnsubscription(ws: WebSocketClient, topic: string): void {
+  if (!ws.userId) {
+    log.warn('Attempted unsubscription without authentication');
+    return;
+  }
+
+  ws.subscribedTopics.delete(topic);
+  log.info(`User ${ws.userId} unsubscribed from topic: ${topic}`);
 }
 
-interface PingMessage extends BaseWebSocketIncomingMessage {
-    type: 'ping';
-}
-
-// Type guards for message types
-function isSubscribeMessage(data: unknown): data is SubscribeMessage {
-    const message = data as BaseWebSocketIncomingMessage;
-    return typeof message === 'object' && message !== null && message.type === 'subscribe' && typeof message.topic === 'string' && message.topic.length > 0;
-}
-
-function isUnsubscribeMessage(data: unknown): data is UnsubscribeMessage {
-    const message = data as BaseWebSocketIncomingMessage;
-    return typeof message === 'object' && message !== null && message.type === 'unsubscribe' && typeof message.topic === 'string' && message.topic.length > 0;
-}
-
-function isPingMessage(data: unknown): data is PingMessage {
-     const message = data as BaseWebSocketIncomingMessage;
-     return typeof message === 'object' && message !== null && message.type === 'ping';
-}
-
-
-// --- Message Handlers ---
-
-async function handleSubscribe(ws: WebSocketClient, data: SubscribeMessage): Promise<void> {
-    if (!ws.userId) return; // Should not happen if called correctly
-
-    const topic = data.topic;
-    // Log subscription attempt
-    logger.info(`Client ${ws.userId} attempting to subscribe to ${topic}`);
-    ws.subscribedTopics.add(topic);
-    logger.info(`Client ${ws.userId} successfully subscribed to ${topic}`);
-
-    const key = `ws:buffer:${ws.userId}:${topic}`;
-    const bufferCount = await redisClient.lLen(key) || 0;
-
-    ws.send(JSON.stringify({
-        type: 'subscription_confirmed',
-        timestamp: new Date().toISOString(),
-        payload: {
-            topic: topic,
-            activeSubscriptions: Array.from(ws.subscribedTopics),
-            bufferedMessageCount: bufferCount
-        }
-    }));
-
-    // Send any buffered messages for this topic
-    // Log before sending buffered messages
-    logger.info(`Client ${ws.userId} subscribed to ${topic}. Checking for buffered messages (Count: ${bufferCount})...`);
-    if (bufferCount > 0) {
-      sendBufferedMessages(ws, topic);
-    } else {
-      logger.debug(`No buffered messages to send for ${topic} to user ${ws.userId}.`);
-    }
-}
-
-function handleUnsubscribe(ws: WebSocketClient, data: UnsubscribeMessage): void {
-     if (!ws.userId) return;
-
-    const topic = data.topic;
-    ws.subscribedTopics.delete(topic);
-    logger.info(`Client ${ws.userId} unsubscribed from ${topic}`);
-    ws.send(JSON.stringify({
-        type: 'unsubscription_confirmed',
-        timestamp: new Date().toISOString(),
-        payload: {
-            topic: topic,
-            activeSubscriptions: Array.from(ws.subscribedTopics)
-        }
-    }));
-}
-
+// Handle ping message
 function handlePing(ws: WebSocketClient): void {
-    ws.send(JSON.stringify({
-        type: 'pong',
-        timestamp: new Date().toISOString(),
-        payload: { serverTime: new Date().toISOString() }
-    }));
+  ws.isAlive = true;
+  ws.send(JSON.stringify({ type: 'pong' }));
 }
 
-export function handleAuthenticatedMessage(ws: WebSocketClient, parsedData: unknown): void {
-    if (!ws.userId) {
-        logger.warn(`Received message from client marked as authenticated but missing userId. Closing.`);
-        ws.close(4003, 'Internal server error: Missing user context');
-        return;
-    }
-
-    // Use base interface for initial type check
-    const messageType = (parsedData as BaseWebSocketIncomingMessage)?.type ?? 'unknown';
-    logger.debug(`Received message from authenticated client ${ws.userId}: Type ${messageType}`);
-
-    if (isSubscribeMessage(parsedData)) {
-        handleSubscribe(ws, parsedData);
-    } else if (isUnsubscribeMessage(parsedData)) {
-        handleUnsubscribe(ws, parsedData);
-    } else if (isPingMessage(parsedData)) {
-        handlePing(ws);
-    } else {
-        logger.debug(`Received unknown message type from ${ws.userId}: ${messageType}`);
-        ws.send(JSON.stringify({ type: 'error', message: `Unknown message type: ${messageType}`, timestamp: new Date().toISOString() }));
-    }
+// Main message handler for authenticated clients
+export function handleAuthenticatedMessage(ws: WebSocketClient, message: BaseWebSocketIncomingMessage): void {
+  switch (message.type) {
+    case 'subscribe':
+      if (typeof message.payload?.topic === 'string') {
+        handleSubscription(ws, message.payload.topic);
+      }
+      break;
+    case 'unsubscribe':
+      if (typeof message.payload?.topic === 'string') {
+        handleUnsubscription(ws, message.payload.topic);
+      }
+      break;
+    case 'ping':
+      handlePing(ws);
+      break;
+    default:
+      log.warn(`Unhandled message type: ${message.type}`);
+  }
 }

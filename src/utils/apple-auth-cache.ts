@@ -1,7 +1,7 @@
 import { redisClient } from '@/config'; // Import the Redis client
 import type { Result } from '@/types/common';
 import { formatError } from './error-formatter'; // Import error formatter
-import { logger } from './logger';
+import { log } from './logger';
 
 // Define TTL in seconds for Redis 'EX' option
 const CACHE_TTL_SECONDS = 5 * 60; // 5 minutes
@@ -30,7 +30,7 @@ export const getCachedAppleAuth = async (token: string): Promise<Result<{ userId
       try {
         // Parse the JSON string stored in Redis
         const result = JSON.parse(cachedData) as Result<{ userId: string }, Error>;
-        logger.debug(`Using cached Apple auth result for token (start): ${token.substring(0, 10)}...`);
+        log.debug(`Using cached Apple auth result for token (start): ${token.substring(0, 10)}...`);
         // Important: Need to reconstruct Error objects if they were serialized
         if (!result.success && result.error) {
              // Re-create the error object if it was serialized as plain object
@@ -43,7 +43,7 @@ export const getCachedAppleAuth = async (token: string): Promise<Result<{ userId
         }
         return result;
       } catch (parseError) {
-        logger.error(`Failed to parse cached Apple auth data for token ${token.substring(0, 10)}...: ${formatError(parseError)}`);
+        log.error(`Failed to parse cached Apple auth data for token ${token.substring(0, 10)}...: ${formatError(parseError)}`);
         // If parsing fails, treat it as a cache miss
         return undefined;
       }
@@ -51,7 +51,7 @@ export const getCachedAppleAuth = async (token: string): Promise<Result<{ userId
     // Key doesn't exist or expired
     return undefined;
   } catch (error) {
-    logger.error(`Redis error getting cached Apple auth for token ${token.substring(0, 10)}...: ${formatError(error)}`);
+    log.error(`Redis error getting cached Apple auth for token ${token.substring(0, 10)}...: ${formatError(error)}`);
     // Treat Redis error as a cache miss
     return undefined;
   }
@@ -74,9 +74,9 @@ export const cacheAppleAuthResult = async (token: string, result: Result<{ userI
     });
 
     await redisClient.set(key, resultToStore, { EX: CACHE_TTL_SECONDS });
-    logger.debug(`Caching Apple auth result for token (start): ${token.substring(0, 10)}... with TTL ${CACHE_TTL_SECONDS}s`);
+    log.debug(`Caching Apple auth result for token (start): ${token.substring(0, 10)}... with TTL ${CACHE_TTL_SECONDS}s`);
   } catch (error) {
-    logger.error(`Redis error caching Apple auth result for token ${token.substring(0, 10)}...: ${formatError(error)}`);
+    log.error(`Redis error caching Apple auth result for token ${token.substring(0, 10)}...: ${formatError(error)}`);
     // Log error and continue
   }
 };

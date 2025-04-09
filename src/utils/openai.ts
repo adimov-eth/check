@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises';
 import OpenAI from 'openai';
 import { config } from '../config';
 import { formatError } from './error-formatter';
-import { logger } from './logger';
+import { log } from './logger';
 
 // Initialize OpenAI client with retry logic
 const openai = new OpenAI({ 
@@ -42,7 +42,7 @@ const getMimeType = (extension: string): string => {
  */
 export const transcribeAudio = async (filePath: string): Promise<string> => {
   try {
-    logger.info(`Transcribing audio file: ${filePath}`);
+    log.info(`Transcribing audio file: ${filePath}`);
     
     // Read the file
     const fileBuffer = await readFile(filePath);
@@ -51,7 +51,7 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
       throw new Error(`Audio file is empty: ${filePath}`);
     }
     
-    logger.info(`Successfully read audio file: ${filePath} (${fileBuffer.length} bytes)`);
+    log.info(`Successfully read audio file: ${filePath} (${fileBuffer.length} bytes)`);
     
     const fileExtension = filePath.split('.').pop()?.toLowerCase() || 'webm';
     const fileName = `audio.${fileExtension}`;
@@ -60,7 +60,7 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
     // Validate file size
     const fileSizeInMB = fileBuffer.length / (1024 * 1024);
     if (fileSizeInMB > 25) {
-      logger.warn(`Audio file too large (${fileSizeInMB.toFixed(2)}MB), maximum size is 25MB`);
+      log.warn(`Audio file too large (${fileSizeInMB.toFixed(2)}MB), maximum size is 25MB`);
       throw new Error('Audio file exceeds maximum size of 25MB');
     }
     
@@ -78,16 +78,16 @@ export const transcribeAudio = async (filePath: string): Promise<string> => {
       throw new Error('OpenAI returned empty transcription');
     }
     
-    logger.info(`Transcription completed for ${filePath}: ${response.substring(0, 50)}...`);
+    log.info(`Transcription completed for ${filePath}: ${response.substring(0, 50)}...`);
     return response;
   } catch (error) {
     // Handle specific OpenAI errors
     if (error instanceof OpenAI.APIError) {
-      logger.error(`OpenAI API Error (${error.status}): ${error.message}`);
+      log.error(`OpenAI API Error (${error.status}): ${error.message}`);
       throw new Error(`Transcription failed: ${error.message}`);
     }
     
-    logger.error(`Transcription failed: ${formatError(error)}`);
+    log.error(`Transcription failed: ${formatError(error)}`);
     throw error;
   }
 };
@@ -106,7 +106,7 @@ export const generateGptResponse = async (prompt: string): Promise<Result<string
       };
     }
     
-    logger.info('Generating GPT response');
+    log.info('Generating GPT response');
     
     // Add system message for better contextual understanding
     const response = await openai.chat.completions.create({
@@ -128,19 +128,19 @@ export const generateGptResponse = async (prompt: string): Promise<Result<string
     const content = response.choices[0].message.content;
     
     if (!content) {
-      logger.warn('GPT returned empty response');
+      log.warn('GPT returned empty response');
       return {
         success: false,
         error: new ExternalServiceError('Empty response from GPT', 'OpenAI')
       };
     }
     
-    logger.info('GPT response generated successfully');
+    log.info('GPT response generated successfully');
     return { success: true, data: content };
   } catch (error) {
     // Handle specific OpenAI errors
     if (error instanceof OpenAI.APIError) {
-      logger.error(`OpenAI API Error (${error.status}): ${error.message}`);
+      log.error(`OpenAI API Error (${error.status}): ${error.message}`);
       return {
         success: false,
         error: new ExternalServiceError(
@@ -150,7 +150,7 @@ export const generateGptResponse = async (prompt: string): Promise<Result<string
       };
     }
     
-    logger.error(`GPT response generation failed: ${formatError(error)}`);
+    log.error(`GPT response generation failed: ${formatError(error)}`);
     return {
       success: false,
       error: new ExternalServiceError('Failed to generate GPT response', 'OpenAI')

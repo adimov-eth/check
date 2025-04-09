@@ -1,7 +1,8 @@
 import { verifyAppleIdentityTokenJws } from '@/services/apple-jws-verifier'; // Import new jose-based verifier
 import type { Result } from '@/types/common';
+import { cacheAppleAuthResult, getCachedAppleAuth } from './apple-auth-cache';
 import { formatError } from './error-formatter';
-import { logger } from './logger';
+import { log } from './logger';
 
 /**
  * Verifies an Apple ID token using jose and returns the user information
@@ -11,30 +12,34 @@ import { logger } from './logger';
  */
 export const verifyAppleToken = async (identityToken: string): Promise<Result<{ userId: string; email?: string }>> => {
   try {
-    // Verify the token using the jose-based function
-    const verificationResult = await verifyAppleIdentityTokenJws(identityToken);
-
-    if (!verificationResult.isValid || !verificationResult.payload) {
-      // Use the error message from the jose verifier
-      throw new Error(verificationResult.error || 'Apple JWS verification failed');
+    // Check cache first
+    const cachedResult = await getCachedAppleAuth(identityToken);
+    if (cachedResult) {
+      return cachedResult;
     }
 
-    const payload = verificationResult.payload;
+    const result = await verifyAppleIdentityTokenJws(identityToken);
 
-    // Additional verification (already done in verifyAppleIdentityTokenJws, but can double-check here if needed)
-    // Issuer and Audience checks are handled by verifyAppleIdentityTokenJws
+    if (result.isValid && result.payload?.sub) {
+      const userId = result.payload.sub; // Apple's unique ID
+      const email = result.payload.email; // Email might be null or private
+      log.debug(`Successfully verified Apple identity token for user sub: ${userId}`);
 
-    logger.debug(`Successfully verified Apple identity token for user sub: ${payload.sub}`);
-    return {
-      success: true,
-      data: {
-        userId: payload.sub, // 'sub' claim is the Apple User ID
-        email: payload.email
-      }
-    };
+      // Cache the successful verification result
+      const successResult = { success: true as const, data: { userId, email } };
+      await cacheAppleAuthResult(identityToken, successResult);
+      return successResult;
+    } else {
+      // Cache the failure result
+      const error = new Error(result.error || 'Apple token verification failed');
+      log.error(`Error verifying Apple ID token: ${formatError(error)}`);
+      const failureResult = { success: false as const, error };
+      await cacheAppleAuthResult(identityToken, failureResult); // Cache failures too to prevent retries
+      return failureResult;
+    }
 
   } catch (error) {
-    logger.error(`Error verifying Apple ID token: ${formatError(error)}`);
+    log.error(`Error verifying Apple ID token: ${formatError(error)}`);
     return {
       success: false,
       error: error instanceof Error ? error : new Error(String(error))
