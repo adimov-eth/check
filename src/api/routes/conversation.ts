@@ -3,16 +3,16 @@ import { ValidationError } from '@/middleware/error';
 import { conversationsRateLimiter } from '@/middleware/rate-limit';
 import { gptQueue } from '@/queues';
 import {
-  createConversation,
-  getConversationById,
-  getUserConversations,
-  updateConversationStatus
+    createConversation,
+    getConversationById,
+    getUserConversations,
+    updateConversationStatus
 } from '@/services/conversation-service';
 import { canCreateConversation } from '@/services/usage-service';
 import type { Conversation } from '@/types';
 import type { AuthenticatedRequest, RequestHandler } from '@/types/common';
 import { asyncHandler } from '@/utils/async-handler';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import { Router } from 'express';
 import { z } from 'zod';
 
@@ -56,7 +56,7 @@ const createNewConversation: RequestHandler = async (req, res) => {
     recordingType,
   });
 
-  logger.debug(`Created new conversation: ${conversation.id} for user: ${userId}`);
+  log.debug(`Created new conversation`, { conversationId: conversation.id, userId });
   return res.status(201).json({ 
     success: true,
     conversation: {
@@ -75,7 +75,7 @@ const getConversation: RequestHandler = async (req, res) => {
   const { resource, userId } = req as AuthenticatedRequest;
   const conversation = resource as Conversation;
 
-  logger.debug(`Retrieved conversation: ${req.params.id} for user: ${userId}`);
+  log.debug(`Retrieved conversation`, { conversationId: req.params.id, userId });
   return res.status(200).json({ conversation });
 };
 
@@ -86,7 +86,7 @@ const getAllConversations: RequestHandler = async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
 
   const conversations = await getUserConversations(userId);
-  logger.debug(`Retrieved ${conversations.length} conversations for user: ${userId}`);
+  log.debug(`Retrieved conversations`, { count: conversations.length, userId });
   return res.status(200).json({ conversations });
 };
 
@@ -105,7 +105,7 @@ const processConversation: RequestHandler = async (req, res) => {
   await updateConversationStatus(conversationId, 'processing');
   await gptQueue.add('process-conversation', { conversationId, userId });
 
-  logger.debug(`Started processing conversation: ${conversationId} for user: ${userId}`);
+  log.debug(`Started processing conversation`, { conversationId, userId });
   return res.status(202).json({ 
     message: 'Processing started', 
     conversationId 

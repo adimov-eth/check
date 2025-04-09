@@ -1,6 +1,6 @@
 import { join } from 'path';
 import { createClient } from 'redis';
-import { logger } from './utils/logger';
+import { log } from './utils/logger';
 export const config = {
     port: Number(process.env.PORT) || 3001,
     openaiApiKey: process.env.OPENAI_API_KEY || '',
@@ -45,7 +45,7 @@ export const redisClient = createClient({
   url: `redis://${config.redis.host}:${config.redis.port}` // e.g., "redis://localhost:6379"
 });
 
-redisClient.on('error', (err) => logger.error('Redis Client Error:', err));
+redisClient.on('error', (err) => log.error('Redis Client Error:', err));
 (async () => {
   await redisClient.connect();
 })();

@@ -1,23 +1,9 @@
 import { config } from '@/config';
 import { query } from '@/database';
 import { hasActiveSubscription } from '@/services/subscription-serivice';
-import { logger } from '@/utils/logger';
-
-/**
- * Get the start date of the current week (UTC)
- */
-const getCurrentWeekStart = (): number => {
-  const now = new Date();
-  // Get the day of the week (0-6, where 0 is Sunday)
-  const dayOfWeek = now.getUTCDay();
-  // Subtract days to get to the start of the week (Sunday)
-  const startOfWeek = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() - dayOfWeek
-  ));
-  return Math.floor(startOfWeek.getTime() / 1000);
-};
+import { getCurrentWeekStart, getNextResetDate } from '@/utils/date-utils';
+import { formatError } from '@/utils/error-formatter';
+import { log } from '@/utils/logger';
 
 /**
  * Count conversations created by a user in the current week
@@ -34,7 +20,7 @@ export const countUserConversationsThisWeek = async (userId: string): Promise<nu
     
     // If user doesn't exist in our database, they have 0 conversations
     if (!userResult[0] || !userResult[0].user_exists) {
-      logger.warn(`Attempted to count conversations for non-existent user: ${userId}`);
+      log.warn(`Attempted to count conversations for non-existent user`, { userId });
       return 0;
     }
     
@@ -47,7 +33,7 @@ export const countUserConversationsThisWeek = async (userId: string): Promise<nu
     
     return result[0]?.count || 0;
   } catch (error) {
-    logger.error(`Error counting user conversations: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error counting user conversations`, { userId, error: formatError(error) });
     // Fall back to 0 to prevent usage tracking errors from blocking user actions
     return 0;
   }
@@ -89,7 +75,7 @@ export const canCreateConversation = async (userId: string): Promise<{
       isSubscribed: false
     };
   } catch (error) {
-    logger.error(`Error checking if user can create conversation: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error checking if user can create conversation`, { userId, error: formatError(error) });
     
     // Default to allowing creation if there's an error (business decision)
     return {
@@ -100,20 +86,6 @@ export const canCreateConversation = async (userId: string): Promise<{
       isSubscribed: false
     };
   }
-};
-
-/**
- * Calculate next reset date (start of next week)
- */
-const getNextResetDate = (): number => {
-  const now = new Date();
-  const daysUntilNextWeek = 7 - now.getUTCDay();
-  const resetDate = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + daysUntilNextWeek
-  ));
-  return Math.floor(resetDate.getTime() / 1000);
 };
 
 /**
@@ -153,7 +125,7 @@ export const getUserUsageStats = async (userId: string): Promise<{
       resetDate: nextResetDate
     };
   } catch (error) {
-    logger.error(`Error getting user usage stats: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error getting user usage stats`, { userId, error: formatError(error) });
     throw error;
   }
 };

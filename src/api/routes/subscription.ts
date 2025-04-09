@@ -6,7 +6,7 @@ import { hasActiveSubscription, updateSubscriptionFromNotification, verifyAndSav
 import type { AuthenticatedRequest } from '@/types/common';
 import { asyncHandler } from '@/utils/async-handler';
 import { formatError } from '@/utils/error-formatter';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import { z } from 'zod';
@@ -15,10 +15,10 @@ const router = Router();
 
 router.use((req: Request, res: Response, next: NextFunction) => {
   if (req.path === '/notifications' && req.method === 'POST') {
-    logger.debug("Notifications route hit, bypassing user auth middleware.");
+    log.debug("Notifications route hit, bypassing user auth middleware.");
     return next();
   }
-  logger.debug(`Applying auth middleware to ${req.method} ${req.path}`);
+  log.debug(`Applying auth middleware`, { method: req.method, path: req.path });
   requireAuth(req, res, (authError) => {
     if (authError) return next(authError);
     ensureUser(req, res, next);
@@ -54,7 +54,7 @@ router.get('/status', asyncHandler(async (req: Request, res: Response) => {
   }
 
   const subscription = await hasActiveSubscription(userId);
-  logger.debug(`Retrieved subscription status for user: ${userId}. Active: ${subscription.isActive}`);
+  log.debug(`Retrieved subscription status`, { userId, active: subscription.isActive });
 
   const expiresDateMs = subscription.expiresDate ? Math.round(subscription.expiresDate) : null;
 
@@ -75,11 +75,11 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     throw new AuthenticationError('Unauthorized: User ID missing in /verify endpoint.');
   }
 
-  logger.info(`Subscription verification request received for user: ${userId}`);
+  log.info(`Subscription verification request received`, { userId });
 
   const validationResult = verifySubscriptionSchema.safeParse(req.body);
   if (!validationResult.success) {
-    logger.error(`Invalid /verify request body for user ${userId}: ${validationResult.error.message}`);
+    log.error(`Invalid /verify request body`, { userId, error: validationResult.error.message });
     return res.status(400).json({ error: `Invalid request format: ${validationResult.error.message}` });
   }
 
@@ -88,24 +88,24 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
   const verificationResult = await verifyAppleSignedData(receiptData);
 
   if (!verificationResult.isValid || !verificationResult.payload) {
-    logger.error(`Apple signed data verification failed during /verify for user ${userId}: ${verificationResult.error || 'Unknown reason'}`);
+    log.error(`Apple signed data verification failed during /verify`, { userId, error: verificationResult.error || 'Unknown reason' });
     return res.status(400).json({ error: `Signed data verification failed: ${verificationResult.error}` });
   }
 
   const payload = verificationResult.payload;
-  logger.info(`Successfully verified signed data for /verify. User: ${userId}, Transaction ID: ${payload.transactionId}, OrigTxID: ${payload.originalTransactionId}`);
+  log.info(`Successfully verified signed data for /verify`, { userId, transactionId: payload.transactionId, originalTransactionId: payload.originalTransactionId });
 
   const saveResult = await verifyAndSaveSubscription(userId, payload);
 
   if (!saveResult.success) {
-    logger.error(`Failed to save subscription from /verify for user ${userId}: ${formatError(saveResult.error)} (OrigTxID: ${payload.originalTransactionId})`);
+    log.error(`Failed to save subscription from /verify`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(saveResult.error) });
     return res.status(500).json({ error: 'Failed to process subscription verification.' });
   }
 
   const currentStatus = await hasActiveSubscription(userId);
   const expiresDateMs = currentStatus.expiresDate ? Math.round(currentStatus.expiresDate) : null;
 
-  logger.info(`Successfully processed /verify request for user ${userId}, original transaction ${payload.originalTransactionId}`);
+  log.info(`Successfully processed /verify request`, { userId, originalTransactionId: payload.originalTransactionId });
   res.status(200).json({
     message: 'Subscription verified successfully.',
     subscription: {
@@ -118,12 +118,12 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
 }));
 
 router.post('/notifications', asyncHandler(async (req: Request, res: Response) => {
-  logger.info(`Received App Store notification headers: ${JSON.stringify(req.headers)}`);
-  logger.info(`Received App Store notification body (start): ${JSON.stringify(req.body).substring(0, 300)}...`);
+  log.info(`Received App Store notification headers`, { headers: req.headers });
+  log.info(`Received App Store notification body (start)`, { bodyStart: JSON.stringify(req.body).substring(0, 300) + '...' });
 
   const validationResult = appStoreNotificationSchema.safeParse(req.body);
   if (!validationResult.success) {
-    logger.error(`Invalid notification format: ${validationResult.error.message}. Body: ${JSON.stringify(req.body)}`);
+    log.error(`Invalid notification format`, { error: validationResult.error.message, body: JSON.stringify(req.body) });
     return res.status(400).json({ error: `Invalid notification format: ${validationResult.error.message}` });
   }
 
@@ -132,30 +132,30 @@ router.post('/notifications', asyncHandler(async (req: Request, res: Response) =
   const signedData = notification.signedPayload || notification.data?.signedTransactionInfo || notification.data?.signedRenewalInfo;
 
   if (!signedData) {
-    logger.warn(`Notification received without signedPayload, signedTransactionInfo, or signedRenewalInfo. Type: ${notification.notificationType || 'Unknown'}. Skipping.`);
+    log.warn(`Notification received without signed data`, { notificationType: notification.notificationType || 'Unknown' });
     return res.status(200).json({ success: true, message: "Notification received but no signed data found to process." });
   }
 
-  logger.info(`Processing signed data from notification. Type: ${notification.notificationType || 'N/A'}, Subtype: ${notification.subtype || 'N/A'}, Env: ${notification.data?.environment || 'Unknown'}`);
+  log.info(`Processing signed data from notification`, { type: notification.notificationType || 'N/A', subtype: notification.subtype || 'N/A', env: notification.data?.environment || 'Unknown' });
 
   const verificationResult = await verifyAppleSignedData(signedData);
 
   if (!verificationResult.isValid || !verificationResult.payload) {
-    logger.error(`App Store signed data verification failed: ${verificationResult.error || 'Unknown reason'}. Data: ${signedData.substring(0, 100)}...`);
+    log.error(`App Store signed data verification failed`, { error: verificationResult.error || 'Unknown reason', dataStart: signedData.substring(0, 100) + '...' });
     return res.status(500).json({ error: `Signed data verification failed: ${verificationResult.error}` });
   }
 
   const payload = verificationResult.payload;
-  logger.info(`Successfully verified signed data. Transaction ID: ${payload.transactionId}, Original Transaction ID: ${payload.originalTransactionId}, Environment: ${payload.environment}`);
+  log.info(`Successfully verified signed data from notification`, { transactionId: payload.transactionId, originalTransactionId: payload.originalTransactionId, environment: payload.environment });
 
   const updateResult = await updateSubscriptionFromNotification(payload);
 
   if (!updateResult.success) {
-    logger.error(`Failed to update subscription from notification: ${formatError(updateResult.error)} (OrigTxID: ${payload.originalTransactionId})`);
+    log.error(`Failed to update subscription from notification`, { originalTransactionId: payload.originalTransactionId, error: formatError(updateResult.error) });
     return res.status(500).json({ error: `Failed to process notification: ${formatError(updateResult.error)}` });
   }
 
-  logger.info(`Successfully processed App Store notification for original transaction ${payload.originalTransactionId}`);
+  log.info(`Successfully processed App Store notification`, { originalTransactionId: payload.originalTransactionId });
   res.status(200).json({ success: true });
 }));
 

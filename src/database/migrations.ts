@@ -1,6 +1,6 @@
 // server/src/database/migrations.ts (New File)
-import { logger } from '@/utils';
 import { formatError } from '@/utils/error-formatter';
+import { log } from '@/utils/logger';
 import { type Database, type SQLQueryBindings } from 'bun:sqlite'; // Import Database type and SQLQueryBindings
 import { dbInstance } from './index'; // Import the direct instance
 
@@ -14,10 +14,10 @@ export const runMigrations = async (): Promise<void> => {
       ('PRAGMA user_version').get();
     const currentVersion = result?.user_version ?? 0;
 
-    logger.info(`Current database schema version: ${currentVersion}. Target version: ${TARGET_SCHEMA_VERSION}`);
+    log.info(`Current database schema version`, { currentVersion, targetVersion: TARGET_SCHEMA_VERSION });
 
     if (currentVersion >= TARGET_SCHEMA_VERSION) {
-      logger.info('Database schema is up to date.');
+      log.info('Database schema is up to date.');
       return;
     }
 
@@ -32,7 +32,7 @@ export const runMigrations = async (): Promise<void> => {
 
     // --- Migration Logic ---
     if (currentVersion < 1) {
-      logger.info('Running migration: Initialize schema (v0 -> v1)...');
+      log.info('Running migration: Initialize schema (v0 -> v1)...');
       // Explicitly type the db parameter in the callback
       await runTransaction(async (db: Database) => { 
           // Initial Schema Creation (from schema.ts)
@@ -90,12 +90,12 @@ export const runMigrations = async (): Promise<void> => {
           // IMPORTANT: Update schema version *within the transaction*
           await db.exec(`PRAGMA user_version = 1`);
       });
-       logger.info('Successfully initialized schema and set version to 1.');
+       log.info('Successfully initialized schema and set version to 1.');
     }
 
     if (currentVersion < 2) {
       // Migration from v1 to v2 (Update subscriptions table)
-      logger.info('Running migration: Update subscriptions table schema (v1 -> v2)...');
+      log.info('Running migration: Update subscriptions table schema (v1 -> v2)...');
       // Explicitly type the db parameter in the callback
       await runTransaction(async (db: Database) => { 
          // 1. Create the new table structure
@@ -161,7 +161,7 @@ export const runMigrations = async (): Promise<void> => {
               // 3. Drop the old table only if it existed
               await db.exec('DROP TABLE subscriptions;');
           } else {
-              logger.info('Old `subscriptions` table not found, skipping data migration and drop for v2.');
+              log.info('Old `subscriptions` table not found, skipping data migration and drop for v2.');
           }
 
           // 4. Rename the new table
@@ -176,13 +176,13 @@ export const runMigrations = async (): Promise<void> => {
           // 6. Update schema version *within the transaction*
           await db.exec(`PRAGMA user_version = ${TARGET_SCHEMA_VERSION}`);
       });
-      logger.info(`Successfully migrated subscriptions table to v2 and set schema version to ${TARGET_SCHEMA_VERSION}.`);
+      log.info(`Successfully migrated subscriptions table to v2`, { schemaVersion: TARGET_SCHEMA_VERSION });
     }
 
     // Add future migrations here using `if (currentVersion < NEW_VERSION) { ... }`
 
   } catch (error) {
-    logger.error(`Database migration failed: ${formatError(error)}`);
+    log.error(`Database migration failed`, { error: formatError(error) });
     throw error; // Re-throw to indicate failure
   }
 };

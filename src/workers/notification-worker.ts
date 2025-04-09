@@ -1,5 +1,5 @@
 import { config } from '@/config'; // Your config (e.g., Redis connection)
-import { logger } from '@/utils/logger'; // Your logger utility
+import { log } from '@/utils/logger'; // Use 'log' object
 import { sendToSubscribedClients } from '@/utils/websocket'; // Import the specific function
 import { Queue, Worker } from 'bullmq';
 
@@ -23,10 +23,10 @@ const notificationWorker = new Worker(
         timestamp,
         payload,
       });
-      logger.debug(`Processed notification ${type} for user ${userId} on topic ${topic}`);
+      log.debug(`Processed notification`, { type, userId, topic });
     } catch (error) {
       // Log and re-throw the error for retries
-      logger.error(
+      log.error(
         `Failed to process notification ${type} for user ${userId}: ${
           error instanceof Error ? error.message : String(error)
         }`
@@ -42,18 +42,18 @@ const notificationWorker = new Worker(
 
 // Log worker events for debugging
 notificationWorker.on('completed', (job) => {
-  logger.debug(`Notification job ${job.id} completed`);
+  log.debug(`Notification job completed`, { jobId: job.id });
 });
 
 notificationWorker.on('failed', (job, err) => {
-  logger.error(`Notification job ${job?.id} failed: ${err.message}`);
+  log.error(`Notification job failed`, { jobId: job?.id, error: err.message });
 });
 
 // Graceful shutdown to close the worker
 const gracefulShutdown = async (): Promise<void> => {
-  logger.info('Shutting down server...');
+  log.info('Shutting down server...');
   await notificationWorker.close();
-  logger.info('Notification worker closed');
+  log.info('Notification worker closed');
   process.exit(0);
 };
 

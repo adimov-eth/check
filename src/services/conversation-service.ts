@@ -2,7 +2,8 @@ import { randomUUIDv7 } from "bun";
 
 import { query, run, transaction } from '@/database';
 import type { Conversation } from '@/types';
-import { logger } from '@/utils/logger';
+import { formatError } from '@/utils/error-formatter';
+import { log } from '@/utils/logger';
 
 /**
  * Create a new conversation
@@ -33,7 +34,7 @@ export const createConversation = async ({
       
       if (!userExists) {
         // This shouldn't happen with proper middleware
-        logger.error(`User ${userId} not found in database but passed auth middleware`);
+        log.error(`User not found in database but passed auth middleware`, { userId });
         throw new Error(`User not found: ${userId}`);
       }
       
@@ -43,7 +44,7 @@ export const createConversation = async ({
         [id, userId, mode, recordingType, 'waiting', now, now]
       );
       
-      logger.info(`Created conversation ${id} for user ${userId}`);
+      log.info(`Created conversation`, { conversationId: id, userId });
       
       return {
         id,
@@ -55,7 +56,7 @@ export const createConversation = async ({
         updatedAt: now
       };
     } catch (error) {
-      logger.error(`Failed to create conversation: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`Failed to create conversation`, { error: formatError(error) });
       throw error;
     }
   });
@@ -73,7 +74,7 @@ export const getConversationById = async (conversationId: string, userId: string
     
     return conversations[0] || null;
   } catch (error) {
-    logger.error(`Error fetching conversation by ID: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error fetching conversation by ID`, { error: formatError(error) });
     throw error;
   }
 };
@@ -88,7 +89,7 @@ export const getUserConversations = async (userId: string): Promise<Conversation
       [userId]
     );
   } catch (error) {
-    logger.error(`Error fetching user conversations: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error fetching user conversations`, { error: formatError(error) });
     throw error;
   }
 };
@@ -125,9 +126,9 @@ export const updateConversationStatus = async (
       params
     );
     
-    logger.info(`Updated conversation ${conversationId} status to ${status}`);
+    log.info(`Updated conversation status`, { conversationId, status });
   } catch (error) {
-    logger.error(`Error updating conversation status: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error updating conversation status`, { error: formatError(error) });
     throw error;
   }
 };

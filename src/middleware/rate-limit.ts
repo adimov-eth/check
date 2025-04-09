@@ -2,7 +2,7 @@ import type { AuthenticatedRequest } from '@/types/common';
 import { formatError } from '@/utils/error-formatter';
 import type { NextFunction, Request, Response } from 'express';
 import { config } from '../config';
-import { logger } from '../utils/logger';
+import { log } from '../utils/logger';
 import { RateLimitError } from './error';
 /**
  * Interface for rate limit entry
@@ -61,17 +61,17 @@ const cleanupStores = (): void => {
           cleanedEntries++;
         });
         
-        logger.warn(`Rate limit store '${storeName}' exceeded maximum size. Cleaned ${entriesToRemove.length} oldest entries.`);
+        log.warn(`Rate limit store exceeded maximum size`, { storeName, cleanedEntries: entriesToRemove.length });
       }
       
       totalCleanedEntries += cleanedEntries;
     });
     
     if (totalCleanedEntries > 0) {
-      logger.debug(`Rate limit cleanup: removed ${totalCleanedEntries} expired entries`);
+      log.debug(`Rate limit cleanup completed`, { cleanedEntries: totalCleanedEntries });
     }
   } catch (error) {
-    logger.error(`Error cleaning up rate limit stores: ${formatError(error)}`);
+    log.error(`Error cleaning up rate limit stores`, { error: formatError(error) });
   }
 };
 
@@ -130,7 +130,7 @@ export const createRateLimiter = (
 
       // Check if rate limit is exceeded
       if (currentCount > maxRequests) {
-        logger.warn(`Rate limit exceeded: ${keyBase} on route ${req.method} ${req.path}`);
+        log.warn(`Rate limit exceeded`, { keyBase, method: req.method, path: req.path });
         res.setHeader('Retry-After', resetInSeconds);
         
         // Throw a RateLimitError to be caught by the error handler middleware
@@ -146,7 +146,7 @@ export const createRateLimiter = (
         return next(error);
       }
       
-      logger.error(`Error in rate limiter: ${formatError(error)}`);
+      log.error(`Error in rate limiter middleware`, { error: formatError(error) });
       next(error);
     }
   };

@@ -1,7 +1,8 @@
 import { config } from '@/config';
 import { getAudioByPath } from '@/services/audio-service';
+import { formatError } from '@/utils/error-formatter';
 import { deleteFile, getFileAge } from '@/utils/file';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import { Job, Worker } from 'bullmq';
 import { readdir } from 'fs/promises';
 import { join } from 'path';
@@ -32,16 +33,16 @@ const cleanupOrphanedFiles = async (maxAgeHours: number = DEFAULT_MAX_AGE_HOURS)
         if (!audio) {
           // File is orphaned, delete it
           await deleteFile(filePath);
-          logger.info(`Deleted orphaned file: ${filePath}`);
+          log.info(`Deleted orphaned file`, { filePath });
         }
       } catch (error) {
-        logger.error(`Error processing file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+        log.error(`Error processing file for cleanup`, { filePath, error: formatError(error) });
       }
     }
     
-    logger.info('Cleanup job completed successfully');
+    log.info('Cleanup job completed successfully');
   } catch (error) {
-    logger.error(`Cleanup job failed: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Cleanup job failed`, { error: formatError(error) });
     throw error;
   }
 };
@@ -63,7 +64,7 @@ const worker = new Worker<CleanupJob>('cleanup', processCleanup, {
   concurrency: 1, // Run one cleanup job at a time
 });
 
-worker.on('completed', job => logger.info(`Cleanup job ${job.id} completed successfully`));
-worker.on('failed', (job, err) => logger.error(`Cleanup job ${job?.id} failed: ${err.message}`));
+worker.on('completed', job => log.info(`Cleanup job completed successfully`, { jobId: job.id }));
+worker.on('failed', (job, err) => log.error(`Cleanup job failed`, { jobId: job?.id, error: err.message }));
 
 export default worker; 

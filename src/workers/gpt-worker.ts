@@ -3,7 +3,7 @@ import { query, queryOne, transaction } from '@/database';
 import { ExternalServiceError } from '@/middleware/error';
 import { sendConversationNotification, sendStatusNotification } from '@/services/notification-service';
 import { formatError } from '@/utils/error-formatter';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import { generateGptResponse } from '@/utils/openai';
 import { SYSTEM_PROMPTS } from '@/utils/system-prompts';
 import { sanitizeInput } from '@/utils/validation';
@@ -12,30 +12,44 @@ import { Job, Worker, type ConnectionOptions } from 'bullmq';
 import type { Audio, Conversation } from '@/types';
 
 /**
- * Create a prompt for GPT based on conversation mode and recording type
- * @param mode Conversation mode (maps to a system prompt)
- * @param recordingType Type of recording (separate or live)
- * @param transcriptions Array of transcriptions
- * @returns Formatted prompt for GPT
+ * Creates a sanitized prompt for GPT based on conversation details.
+ * @param mode Conversation mode (e.g., 'therapy', 'coaching').
+ * @param recordingType 'separate' or 'live'.
+ * @param transcriptions Array of sanitized transcription strings.
+ * @returns The fully formatted prompt string.
+ * @throws If the mode is invalid or transcriptions are missing/incorrect count.
  */
-const createPrompt = (
+const _createGptPrompt = (
   mode: string,
-  recordingType: string,
+  recordingType: 'separate' | 'live',
   transcriptions: string[]
 ): string => {
-  // Get system prompt for the selected mode
   const systemPrompt = SYSTEM_PROMPTS[mode as keyof typeof SYSTEM_PROMPTS];
   if (!systemPrompt) {
+    log.warn('Invalid conversation mode requested for GPT prompt', { mode });
     throw new Error(`Invalid conversation mode: ${mode}`);
   }
-  
-  // Sanitize transcriptions to prevent prompt injection
-  const sanitizedTranscriptions = transcriptions.map(text => sanitizeInput(text));
-  
-  // Format prompt based on recording type
-  return recordingType === 'separate'
-    ? `${systemPrompt}\n\nPartner 1: ${sanitizedTranscriptions[0]}\nPartner 2: ${sanitizedTranscriptions[1]}`
-    : `${systemPrompt}\n\nConversation: ${sanitizedTranscriptions[0]}`;
+
+  // Basic validation already happened in the main handler, but double-check here
+  if (transcriptions.length === 0) {
+    throw new Error('Cannot create prompt with no transcriptions.');
+  }
+  if (recordingType === 'separate' && transcriptions.length !== 2) {
+    throw new Error(`Expected 2 transcriptions for separate mode, got ${transcriptions.length}.`);
+  }
+  if (recordingType === 'live' && transcriptions.length !== 1) {
+    throw new Error(`Expected 1 transcription for live mode, got ${transcriptions.length}.`);
+  }
+
+  // Sanitize again just in case (defense in depth)
+  const sanitizedTranscriptions = transcriptions.map(t => sanitizeInput(t));
+
+  // Format based on recording type
+  if (recordingType === 'separate') {
+    return `${systemPrompt}\n\nPartner 1: ${sanitizedTranscriptions[0]}\nPartner 2: ${sanitizedTranscriptions[1]}`;
+  } else { // 'live'
+    return `${systemPrompt}\n\nConversation: ${sanitizedTranscriptions[0]}`;
+  }
 };
 
 /**
@@ -54,7 +68,7 @@ const worker = new Worker(
   async (job: Job) => {
     const { conversationId, userId } = job.data;
     
-    logger.info(`Processing GPT job ${job.id} for conversation ${conversationId}`);
+    log.info(`Processing GPT job`, { jobId: job.id, conversationId });
     
     try {
       // Notify processing started
@@ -94,7 +108,7 @@ const worker = new Worker(
       }
 
       // Generate GPT response
-      const prompt = createPrompt(conversation.mode, conversation.recordingType, transcriptions);
+      const prompt = _createGptPrompt(conversation.mode, conversation.recordingType, transcriptions);
       const result = await generateGptResponse(prompt);
 
       if (!result.success) {
@@ -121,14 +135,14 @@ const worker = new Worker(
         })
       ]);
       
-      logger.info(`Successfully processed conversation ${conversationId}`);
+      log.info(`Successfully processed conversation`, { conversationId });
       return { success: true };
     } catch (error) {
       // Handle specific errors
       if (error instanceof ExternalServiceError) {
-        logger.error(`External service error processing conversation ${conversationId}: ${error.message}`);
+        log.error(`External service error processing conversation`, { conversationId, error: error.message });
       } else {
-        logger.error(`GPT processing failed for job ${job.id}: ${formatError(error)}`);
+        log.error(`GPT processing failed`, { jobId: job.id, error: formatError(error) });
       }
       
       // Determine appropriate error message
@@ -148,7 +162,7 @@ const worker = new Worker(
         // Send error notification
         await sendStatusNotification(userId, conversationId, 'error', errorMessage);
       } catch (notificationError) {
-        logger.error(`Failed to send error notification: ${formatError(notificationError)}`);
+        log.error(`Failed to send error notification after GPT failure`, { userId, conversationId, error: formatError(notificationError) });
       }
       
       // Rethrow to mark job as failed
@@ -162,12 +176,12 @@ const worker = new Worker(
 );
 
 // Event listeners for logging
-worker.on('completed', (job: Job) => logger.info(`GPT job ${job.id} completed successfully`));
+worker.on('completed', (job: Job) => log.info(`GPT job completed successfully`, { jobId: job.id }));
 worker.on('failed', (job: Job | undefined, err: Error) => 
-  logger.error(`GPT job ${job?.id || 'unknown'} failed: ${formatError(err)}`)
+  log.error(`GPT job failed`, { jobId: job?.id || 'unknown', error: formatError(err) })
 );
 worker.on('error', err => 
-  logger.error(`Worker error: ${formatError(err)}`)
+  log.error(`GPT worker error`, { error: formatError(err) })
 );
 
 export default worker;

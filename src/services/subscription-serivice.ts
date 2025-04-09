@@ -1,7 +1,7 @@
 import { query, run, transaction } from '@/database';
 import type { Result } from '@/types/common';
 import { formatError } from '@/utils/error-formatter';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import type { VerifiedNotificationPayload } from './apple-jws-verifier';
 
 // Interface matching the database 'subscriptions' table structure
@@ -34,49 +34,109 @@ interface ActiveSubscriptionStatus {
 }
 
 async function findUserIdForNotification(payload: VerifiedNotificationPayload): Promise<string | null> {
-    logger.debug(`Attempting to find user ID for originalTransactionId: ${payload.originalTransactionId} or appAccountToken: ${payload.appAccountToken}`);
+    log.debug(`Attempting to find user ID`, { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
     if (payload.appAccountToken) {
         try {
             const userResult = await query<{ id: string }>('SELECT id FROM users WHERE appAccountToken = ? LIMIT 1', [payload.appAccountToken]);
             if (userResult.length > 0) {
-                 logger.info(`Found user ${userResult[0].id} via appAccountToken`);
+                 log.info(`Found user via appAccountToken`, { userId: userResult[0].id, appAccountToken: payload.appAccountToken });
                  return userResult[0].id;
             }
-             logger.warn(`appAccountToken ${payload.appAccountToken} provided but no matching user found.`);
+             log.warn(`appAccountToken provided but no matching user found`, { appAccountToken: payload.appAccountToken });
         } catch (error) {
-             logger.error(`Database error looking up user by appAccountToken: ${formatError(error)}`);
+             log.error(`Database error looking up user by appAccountToken`, { appAccountToken: payload.appAccountToken, error: formatError(error) });
         }
     }
     try {
          const subResult = await query<{ userId: string }>('SELECT userId FROM subscriptions WHERE originalTransactionId = ? ORDER BY createdAt DESC LIMIT 1', [payload.originalTransactionId]);
          if (subResult.length > 0) {
-              logger.info(`Found user ${subResult[0].userId} via originalTransactionId ${payload.originalTransactionId}`);
+              log.info(`Found user via originalTransactionId`, { userId: subResult[0].userId, originalTransactionId: payload.originalTransactionId });
               return subResult[0].userId;
          }
     } catch (error) {
-         logger.error(`Database error looking up user by originalTransactionId: ${formatError(error)}`);
+         log.error(`Database error looking up user by originalTransactionId`, { originalTransactionId: payload.originalTransactionId, error: formatError(error) });
     }
-    logger.error(`Could not find user ID for originalTransactionId: ${payload.originalTransactionId} and appAccountToken: ${payload.appAccountToken}`);
+    log.error(`Could not find user ID`, { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
     return null;
 }
+
+// Helper function to perform the database UPSERT operation
+// This is kept internal to this module
+const _upsertSubscriptionRecord = async (
+  userId: string,
+  payload: VerifiedNotificationPayload,
+  internalStatus: string,
+  expiresSec: number | null,
+  transactionJson: string | null,
+  renewalJson: string | null
+): Promise<void> => {
+  const nowDbTimestamp = Math.floor(Date.now() / 1000);
+  const recordId = payload.originalTransactionId;
+
+  await run(`
+      INSERT INTO subscriptions (
+          id, userId, originalTransactionId, productId, expiresDate, purchaseDate,
+          status, environment, lastTransactionId, lastTransactionInfo, lastRenewalInfo,
+          createdAt, updatedAt, appAccountToken, subscriptionGroupIdentifier, offerType, offerIdentifier
+      ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )
+      ON CONFLICT(id) DO UPDATE SET
+          userId = excluded.userId, // Ensure userId is updated if needed
+          productId = excluded.productId,
+          expiresDate = excluded.expiresDate,
+          // Keep the earliest purchase date on conflict
+          purchaseDate = CASE WHEN excluded.purchaseDate < purchaseDate THEN excluded.purchaseDate ELSE purchaseDate END,
+          status = excluded.status,
+          environment = excluded.environment,
+          // Update transaction/renewal info only if the current payload is newer or equally new
+          lastTransactionId = CASE WHEN excluded.updatedAt >= updatedAt THEN excluded.lastTransactionId ELSE lastTransactionId END,
+          lastTransactionInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastTransactionInfo IS NOT NULL THEN excluded.lastTransactionInfo ELSE lastTransactionInfo END,
+          lastRenewalInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastRenewalInfo IS NOT NULL THEN excluded.lastRenewalInfo ELSE lastRenewalInfo END,
+          updatedAt = excluded.updatedAt,
+          // Preserve existing token/identifiers if the new payload doesn't have them
+          appAccountToken = COALESCE(excluded.appAccountToken, appAccountToken),
+          subscriptionGroupIdentifier = COALESCE(excluded.subscriptionGroupIdentifier, subscriptionGroupIdentifier),
+          offerType = COALESCE(excluded.offerType, offerType),
+          offerIdentifier = COALESCE(excluded.offerIdentifier, offerIdentifier)
+      WHERE
+          TRUE // Always perform the update on conflict
+  `, [
+      recordId, userId, payload.originalTransactionId, payload.productId,
+      expiresSec,
+      Math.floor(payload.purchaseDate / 1000),
+      internalStatus,
+      payload.environment, payload.transactionId,
+      transactionJson, // Use passed-in JSON
+      renewalJson,    // Use passed-in JSON
+      Math.floor(payload.purchaseDate / 1000), // createdAt (only on insert)
+      nowDbTimestamp, // updatedAt
+      payload.appAccountToken || null,
+      payload.subscriptionGroupIdentifier || null,
+      payload.offerType ?? null,
+      payload.offerIdentifier || null
+  ]);
+};
 
 export const verifyAndSaveSubscription = async (
   userId: string,
   payload: VerifiedNotificationPayload
 ): Promise<Result<{ subscriptionId: string }>> => {
-  logger.info(`Verifying and saving subscription info for user ${userId} from payload (OrigTxID: ${payload.originalTransactionId})`);
+  log.info(`Verifying and saving subscription info`, { userId, originalTransactionId: payload.originalTransactionId });
 
+  // Use transaction for atomicity
   return await transaction<Result<{ subscriptionId: string }>>(async () => {
     try {
-      const nowDbTimestamp = Math.floor(Date.now() / 1000);
       const recordId = payload.originalTransactionId;
 
+      // 1. Verify user exists before proceeding
       const userCheck = await query<{ id: string }>('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
       if (userCheck.length === 0) {
-          logger.error(`User ${userId} provided for subscription verification not found in database.`);
+          log.error(`User provided for subscription verification not found in database`, { userId, originalTransactionId: payload.originalTransactionId });
           throw new Error(`User ${userId} not found. Cannot save subscription ${recordId}.`);
       }
 
+      // 2. Prepare data for upsert
       const isRenewalInfo = payload.autoRenewStatus !== undefined && payload.autoRenewProductId !== undefined;
       const transactionJson = !isRenewalInfo ? JSON.stringify(payload) : null;
       const renewalJson = isRenewalInfo ? JSON.stringify(payload) : null;
@@ -86,156 +146,100 @@ export const verifyAndSaveSubscription = async (
         payload.gracePeriodExpiresDate, payload.revocationDate, payload.type
       );
 
-      await run(`
-          INSERT INTO subscriptions (
-              id, userId, originalTransactionId, productId, expiresDate, purchaseDate,
-              status, environment, lastTransactionId, lastTransactionInfo, lastRenewalInfo,
-              createdAt, updatedAt, appAccountToken, subscriptionGroupIdentifier, offerType, offerIdentifier
-          ) VALUES (
-              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-          )
-          ON CONFLICT(id) DO UPDATE SET
-              userId = excluded.userId,
-              productId = excluded.productId,
-              expiresDate = excluded.expiresDate,
-              purchaseDate = CASE WHEN excluded.purchaseDate < purchaseDate THEN excluded.purchaseDate ELSE purchaseDate END,
-              status = excluded.status,
-              environment = excluded.environment,
-              lastTransactionId = CASE WHEN excluded.updatedAt >= updatedAt THEN excluded.lastTransactionId ELSE lastTransactionId END,
-              lastTransactionInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastTransactionInfo IS NOT NULL THEN excluded.lastTransactionInfo ELSE lastTransactionInfo END,
-              lastRenewalInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastRenewalInfo IS NOT NULL THEN excluded.lastRenewalInfo ELSE lastRenewalInfo END,
-              updatedAt = excluded.updatedAt,
-              appAccountToken = COALESCE(excluded.appAccountToken, appAccountToken),
-              subscriptionGroupIdentifier = COALESCE(excluded.subscriptionGroupIdentifier, subscriptionGroupIdentifier),
-              offerType = COALESCE(excluded.offerType, offerType),
-              offerIdentifier = COALESCE(excluded.offerIdentifier, offerIdentifier)
-          WHERE
-              TRUE
-      `, [
-          recordId, userId, payload.originalTransactionId, payload.productId,
-          expiresSec,
-          Math.floor(payload.purchaseDate / 1000),
-          internalStatus,
-          payload.environment, payload.transactionId,
-          transactionJson,
-          renewalJson,
-          Math.floor(payload.purchaseDate / 1000),
-          nowDbTimestamp,
-          payload.appAccountToken || null,
-          payload.subscriptionGroupIdentifier || null,
-          payload.offerType ?? null,
-          payload.offerIdentifier || null
-      ]);
+      // 3. Call the internal upsert function
+      await _upsertSubscriptionRecord(
+        userId,
+        payload,
+        internalStatus,
+        expiresSec,
+        transactionJson,
+        renewalJson
+      );
 
-      logger.info(`Successfully verified and saved subscription record ${recordId} for user ${userId}, status: ${internalStatus}`);
+      log.info(`Successfully verified and saved subscription record`, { recordId, userId, status: internalStatus });
       return { success: true, data: { subscriptionId: recordId } };
 
     } catch (error) {
-      logger.error(`Database error verifying/saving subscription for user ${userId}, originalTransactionId ${payload.originalTransactionId}: ${formatError(error)}`);
+      // Log specific error from this function context
+      log.error(`Database error during verifyAndSaveSubscription`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+      // Re-throw to trigger transaction rollback
       throw error;
     }
   }).catch((error): Result<{ subscriptionId: string }> => {
-      logger.error(`Transaction failed for verifyAndSaveSubscription (User: ${userId}, OrigTxID: ${payload.originalTransactionId}): ${formatError(error)}`);
+      // Catch errors specifically from the transaction execution (including re-thrown ones)
+      log.error(`Transaction failed for verifyAndSaveSubscription`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+      // Return a failure Result
       return { success: false, error: error instanceof Error ? error : new Error('Failed to verify/save subscription in database transaction') };
   });
 };
 
 export const updateSubscriptionFromNotification = async (payload: VerifiedNotificationPayload): Promise<Result<void>> => {
+    // 1. Find the associated user ID first
     const userId = await findUserIdForNotification(payload);
 
     if (!userId) {
-        logger.error(`Failed to find user for notification. Original Transaction ID: ${payload.originalTransactionId}, App Account Token: ${payload.appAccountToken}`);
+        log.error(`Failed to find user for notification`, { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
         return { success: false, error: new Error('User mapping not found for transaction notification') };
     }
 
-    logger.info(`Processing notification update for user ${userId}, original transaction ID: ${payload.originalTransactionId}`);
+    log.info(`Processing notification update`, { userId, originalTransactionId: payload.originalTransactionId });
 
-    const isRenewalInfo = payload.autoRenewStatus !== undefined && payload.autoRenewProductId !== undefined;
-    const transactionJson = !isRenewalInfo ? JSON.stringify(payload) : null;
-    const renewalJson = isRenewalInfo ? JSON.stringify(payload) : null;
-
-    const expiresSec = payload.expiresDate ? Math.floor(payload.expiresDate / 1000) : null;
-
-    const internalStatus = determineSubscriptionStatus(
-        payload.expiresDate,
-        payload.autoRenewStatus,
-        payload.isInBillingRetryPeriod,
-        payload.gracePeriodExpiresDate,
-        payload.revocationDate,
-        payload.type
-    );
-
-    if (internalStatus === 'unknown') {
-        logger.warn(`Could not determine internal status via helper for transaction ${payload.transactionId}`);
-    }
-
+    // Use transaction for atomicity
     return await transaction<Result<void>>(async () => {
         try {
-            const nowDbTimestamp = Math.floor(Date.now() / 1000);
-            const recordId = payload.originalTransactionId;
+          // 2. Verify user exists (redundant check, but safe)
+          const userCheck = await query<{ id: string }>('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+          if (userCheck.length === 0) {
+              log.error(`User (found via notification mapping) not found in DB`, { userId, recordId: payload.originalTransactionId });
+              throw new Error(`User ${userId} mapping exists, but user record not found for subscription ${payload.originalTransactionId}`);
+          }
 
-            const userCheck = await query<{ id: string }>('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
-            if (userCheck.length === 0) {
-                logger.error(`User ${userId} (found via notification mapping) not found in DB. Cannot reliably update subscription ${recordId}.`);
-                throw new Error(`User ${userId} mapping exists, but user record not found for subscription ${recordId}`);
-            }
+          // 3. Prepare data for upsert
+          const isRenewalInfo = payload.autoRenewStatus !== undefined && payload.autoRenewProductId !== undefined;
+          const transactionJson = !isRenewalInfo ? JSON.stringify(payload) : null;
+          const renewalJson = isRenewalInfo ? JSON.stringify(payload) : null;
+          const expiresSec = payload.expiresDate ? Math.floor(payload.expiresDate / 1000) : null;
+          const internalStatus = determineSubscriptionStatus(
+              payload.expiresDate,
+              payload.autoRenewStatus,
+              payload.isInBillingRetryPeriod,
+              payload.gracePeriodExpiresDate,
+              payload.revocationDate,
+              payload.type
+          );
+          if (internalStatus === 'unknown') {
+              log.warn(`Could not determine internal status via helper`, { transactionId: payload.transactionId });
+          }
 
-            await run(`
-                INSERT INTO subscriptions (
-                    id, userId, originalTransactionId, productId, expiresDate, purchaseDate,
-                    status, environment, lastTransactionId, lastTransactionInfo, lastRenewalInfo,
-                    createdAt, updatedAt, appAccountToken, subscriptionGroupIdentifier, offerType, offerIdentifier
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-                ON CONFLICT(id) DO UPDATE SET
-                    userId = excluded.userId,
-                    productId = excluded.productId,
-                    expiresDate = excluded.expiresDate,
-                    purchaseDate = CASE WHEN excluded.purchaseDate < purchaseDate THEN excluded.purchaseDate ELSE purchaseDate END,
-                    status = excluded.status,
-                    environment = excluded.environment,
-                    lastTransactionId = CASE WHEN excluded.updatedAt >= updatedAt THEN excluded.lastTransactionId ELSE lastTransactionId END,
-                    lastTransactionInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastTransactionInfo IS NOT NULL THEN excluded.lastTransactionInfo ELSE lastTransactionInfo END,
-                    lastRenewalInfo = CASE WHEN excluded.updatedAt >= updatedAt AND excluded.lastRenewalInfo IS NOT NULL THEN excluded.lastRenewalInfo ELSE lastRenewalInfo END,
-                    updatedAt = excluded.updatedAt,
-                    appAccountToken = COALESCE(excluded.appAccountToken, appAccountToken),
-                    subscriptionGroupIdentifier = COALESCE(excluded.subscriptionGroupIdentifier, subscriptionGroupIdentifier),
-                    offerType = COALESCE(excluded.offerType, offerType),
-                    offerIdentifier = COALESCE(excluded.offerIdentifier, offerIdentifier)
-                WHERE
-                    TRUE
-            `, [
-                recordId, userId, payload.originalTransactionId, payload.productId,
-                expiresSec,
-                Math.floor(payload.purchaseDate / 1000),
-                internalStatus,
-                payload.environment, payload.transactionId,
-                transactionJson,
-                renewalJson,
-                Math.floor(payload.purchaseDate / 1000),
-                nowDbTimestamp,
-                payload.appAccountToken || null,
-                payload.subscriptionGroupIdentifier || null,
-                payload.offerType ?? null,
-                payload.offerIdentifier || null
-            ]);
+          // 4. Call the internal upsert function
+          await _upsertSubscriptionRecord(
+            userId,
+            payload,
+            internalStatus,
+            expiresSec,
+            transactionJson,
+            renewalJson
+          );
 
-            logger.info(`Successfully updated subscription record via notification for user ${userId}, original transaction ID: ${payload.originalTransactionId}, status: ${internalStatus}`);
-            return { success: true, data: undefined };
+          log.info(`Successfully updated subscription record via notification`, { userId, originalTransactionId: payload.originalTransactionId, status: internalStatus });
+          return { success: true, data: undefined }; // Return success Result
 
         } catch (error) {
-            logger.error(`Database error updating subscription from notification for user ${userId}, originalTransactionId ${payload.originalTransactionId}: ${formatError(error)}`);
+             // Log specific error from this function context
+            log.error(`Database error during updateSubscriptionFromNotification`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+             // Re-throw to trigger transaction rollback
             throw error;
         }
     }).catch((error): Result<void> => {
-         logger.error(`Transaction failed for updateSubscriptionFromNotification (User: ${userId}, OrigTxID: ${payload.originalTransactionId}): ${formatError(error)}`);
+         // Catch errors specifically from the transaction execution (including re-thrown ones)
+         log.error(`Transaction failed for updateSubscriptionFromNotification`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+         // Return a failure Result
          return { success: false, error: error instanceof Error ? error : new Error('Failed to update subscription in database transaction') };
     });
 };
 
 export const hasActiveSubscription = async (userId: string): Promise<ActiveSubscriptionStatus> => {
-    logger.debug(`Checking active subscription status for user ${userId}`);
+    log.debug(`Checking active subscription status`, { userId });
     try {
         const nowSec = Math.floor(Date.now() / 1000);
         const results = await query<SubscriptionRecord>(
@@ -248,7 +252,7 @@ export const hasActiveSubscription = async (userId: string): Promise<ActiveSubsc
         if (results.length > 0) {
             const sub = results[0];
             const expiresMs = sub.expiresDate ? sub.expiresDate * 1000 : null;
-            logger.info(`User ${userId} has an active subscription: ${sub.productId}, Expires: ${expiresMs ? new Date(expiresMs).toISOString() : 'Never'}, Status: ${sub.status}`);
+            log.info(`User has an active subscription`, { userId, productId: sub.productId, expires: expiresMs ? new Date(expiresMs).toISOString() : 'Never', status: sub.status });
             return {
                 isActive: true,
                 expiresDate: expiresMs,
@@ -256,11 +260,11 @@ export const hasActiveSubscription = async (userId: string): Promise<ActiveSubsc
                 subscriptionId: sub.id
             };
         } else {
-             logger.info(`User ${userId} does not have an active subscription.`);
+             log.info(`User does not have an active subscription`, { userId });
              return { isActive: false };
         }
     } catch (error) {
-         logger.error(`Database error checking subscription status for user ${userId}: ${formatError(error)}`);
+         log.error(`Database error checking subscription status`, { userId, error: formatError(error) });
          return { isActive: false };
     }
 };
@@ -292,7 +296,7 @@ const determineSubscriptionStatus = (
   }
   
   if (!expiresDateMs) {
-    logger.warn(`Cannot determine status: expiresDate is missing and type is not Non-Consumable/Non-Renewing.`);
+    log.warn(`Cannot determine status: expiresDate is missing and type is not Non-Consumable/Non-Renewing.`);
     return 'unknown';
   }
   

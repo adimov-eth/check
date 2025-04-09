@@ -1,6 +1,7 @@
 import { query, run, transaction } from '@/database';
 import type { Audio } from '@/types';
-import { logger } from '@/utils/logger';
+import { formatError } from '@/utils/error-formatter';
+import { log } from '@/utils/logger';
 
 
 /**
@@ -66,7 +67,7 @@ export const createAudioRecord = async ({
       
       return audio;
     } catch (error) {
-      logger.error(`Error creating audio record: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`Error creating audio record`, { error: formatError(error) });
       throw error;
     }
   });
@@ -84,7 +85,7 @@ export const getAudioById = async (audioId: number, userId: string): Promise<Aud
     
     return audios[0] || null;
   } catch (error) {
-    logger.error(`Error fetching audio by ID: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error fetching audio by ID`, { error: formatError(error) });
     throw error;
   }
 };
@@ -99,7 +100,7 @@ export const getConversationAudios = async (conversationId: string): Promise<Aud
       [conversationId]
     );
   } catch (error) {
-    logger.error(`Error fetching conversation audios: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Error fetching conversation audios`, { error: formatError(error) });
     throw error;
   }
 };
@@ -153,7 +154,7 @@ export const updateAudioStatus = async (
         params
       );
     } catch (error) {
-      logger.error(`Error updating audio status: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`Error updating audio status`, { error: formatError(error) });
       throw error;
     }
   });
@@ -170,7 +171,7 @@ export const getAudioByPath = async (filePath: string): Promise<Audio | null> =>
       return audios[0] || null;
     });
   } catch (error) {
-    logger.error(`Failed to get audio by path: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Failed to get audio by path`, { error: formatError(error) });
     return null;
   }
 };

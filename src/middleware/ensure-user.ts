@@ -3,7 +3,7 @@
 import { getUser, upsertUser } from '@/services/user-service';
 import type { AuthenticatedRequest, Middleware } from '@/types/common';
 import { formatError } from '@/utils/error-formatter';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger'; // Use 'log' object
 import { NotFoundError } from './error';
 
 export const ensureUser: Middleware = async (req, res, next) => {
@@ -18,12 +18,12 @@ export const ensureUser: Middleware = async (req, res, next) => {
 
     if (existingUser) {
       // User already exists, proceed to the next middleware/route handler
-      logger.debug(`User ${userId} already exists in database`);
+      log.debug(`User already exists in database`, { userId });
       return next();
     }
 
     // User doesn't exist, attempt to create a minimal record (if possible)
-    logger.warn(`User ${userId} not found in DB, attempting to create record.`);
+    log.warn(`User not found in DB, attempting to create record`, { userId });
 
     if (email) {
       const result = await upsertUser({
@@ -33,20 +33,20 @@ export const ensureUser: Middleware = async (req, res, next) => {
       });
 
       if (result.success) {
-        logger.info(`Successfully created minimal user record for ${userId}`);
+        log.info(`Successfully created minimal user record`, { userId });
         return next(); // Proceed after successful creation
       } else {
-        logger.error(`Failed to create user record for ${userId}: ${formatError(result.error)}`);
+        log.error(`Failed to create user record`, { userId, error: formatError(result.error) });
         return next(result.error); // Pass the error to the error handler
       }
     } else {
       // If no email, we can't create a minimal record.  Throw a NotFoundError
-      logger.error(`User ${userId} not found and no email available to create a record.`);
+      log.error(`User not found and no email available to create a record`, { userId });
       return next(new NotFoundError(`User not found: ${userId}`));
     }
 
   } catch (error) {
-    logger.error(`Error in ensureUser middleware for user ${userId}: ${formatError(error)}`);
+    log.error(`Error in ensureUser middleware`, { userId, error: formatError(error) });
     next(error);
   }
 };

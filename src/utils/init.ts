@@ -1,6 +1,7 @@
 import { config } from '@/config';
 import { mkdir } from 'fs/promises';
-import { logger } from './logger';
+import { formatError } from './error-formatter';
+import { log } from './logger';
 
 /**
  * Ensures all required directories exist
@@ -9,9 +10,9 @@ export const initializeDirectories = async (): Promise<void> => {
   try {
     // Ensure uploads directory exists
     await mkdir(config.uploadsDir, { recursive: true });
-    logger.info(`Ensured uploads directory exists: ${config.uploadsDir}`);
+    log.info(`Ensured uploads directory exists`, { path: config.uploadsDir });
   } catch (error) {
-    logger.error(`Failed to initialize directories: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Failed to initialize directories`, { error: formatError(error) });
     throw error;
   }
 }; 

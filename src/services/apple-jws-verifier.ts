@@ -1,6 +1,6 @@
 import { config } from '@/config'; // Import config for bundleId and environment
 import { formatError } from '@/utils/error-formatter';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import { type JWTPayload, createRemoteJWKSet, jwtVerify } from 'jose';
 
 // Define the expected payload structure *after* verification & decoding
@@ -76,13 +76,13 @@ const JWKSET_CACHE_TTL = 60 * 60 * 1000; // Cache JWKSet for 1 hour
 async function getAppleJWKSet(): Promise<ReturnType<typeof createRemoteJWKSet>> {
     const now = Date.now();
     if (!appleJWKSet || now - lastJWKSetFetchTime > JWKSET_CACHE_TTL) {
-        logger.info('Fetching/Refreshing Apple JWKSet...');
+        log.info('Fetching/Refreshing Apple JWKSet...');
         try {
             appleJWKSet = createRemoteJWKSet(APPLE_JWKS_URL);
             lastJWKSetFetchTime = now;
-            logger.info('Successfully fetched/refreshed Apple JWKSet.');
+            log.info('Successfully fetched/refreshed Apple JWKSet.');
         } catch (error) {
-             logger.error(`Failed to fetch Apple JWKSet: ${formatError(error)}`);
+             log.error(`Failed to fetch Apple JWKSet`, { error: formatError(error) });
              // Re-throw the original error to be caught by the caller
              throw error;
         }
@@ -128,18 +128,18 @@ export const verifyAppleIdentityTokenJws = async (identityToken: string): Promis
         // Log specific jose errors if available
         if (error instanceof Error) {
             if (error.name === 'JWSSignatureVerificationFailed') {
-                logger.error(`Apple Identity Token JWS verification failed: Invalid Signature. ${errorMessage}`);
+                log.error(`Apple Identity Token JWS verification failed: Invalid Signature`, { error: errorMessage });
             } else if (error.name === 'JWKSetNoMatchingKey') {
-                logger.error(`Apple Identity Token JWS verification failed: No matching key found in JWKSet. ${errorMessage}`);
+                log.error(`Apple Identity Token JWS verification failed: No matching key found in JWKSet`, { error: errorMessage });
             } else if (error.name === 'JWTExpired') {
-                logger.error(`Apple Identity Token JWS verification failed: Token expired. ${errorMessage}`);
+                log.error(`Apple Identity Token JWS verification failed: Token expired`, { error: errorMessage });
             } else if (error.name === 'JWTClaimValidationFailed') {
-                logger.error(`Apple Identity Token JWS verification failed: Claim validation failed (e.g., iss, aud). ${errorMessage}`);
+                log.error(`Apple Identity Token JWS verification failed: Claim validation failed`, { claims: error.message, error: errorMessage }); // Add specific claim error message
             } else {
-                logger.error(`Apple Identity Token JWS verification failed: ${errorMessage}`);
+                log.error(`Apple Identity Token JWS verification failed`, { error: errorMessage });
             }
         } else {
-            logger.error(`Apple Identity Token JWS verification failed: ${errorMessage}`);
+            log.error(`Apple Identity Token JWS verification failed`, { error: errorMessage });
         }
         return { isValid: false, error: errorMessage };
     }
@@ -155,7 +155,7 @@ function handleSuccessfulVerification(payload: JWTPayload): IdentityTokenVerific
     // Note: Email and name are often only present on the *first* sign-in token.
     // Their absence is not necessarily an error after the first time.
 
-    logger.info(`Successfully verified Apple identity token JWS for user sub: ${payload.sub}`);
+    log.info(`Successfully verified Apple identity token JWS`, { userSub: payload.sub });
 
     // Cast to the specific payload type for the return value
     const identityPayload = payload as IdentityTokenVerificationResult['payload'];
@@ -194,7 +194,7 @@ export const verifyAppleSignedData = async (signedData: string): Promise<Notific
         const expectedEnv = config.nodeEnv === 'production' ? 'Production' : 'Sandbox';
         if (verifiedPayload.environment !== expectedEnv) {
             // This might be okay if testing sandbox in prod or vice-versa, but log it.
-            logger.warn(`Payload environment (${verifiedPayload.environment}) does not match server environment (${expectedEnv}). Processing anyway, but check configuration.`);
+            log.warn(`Payload environment does not match server environment`, { payloadEnv: verifiedPayload.environment, serverEnv: expectedEnv });
         }
 
         // 3. Check for necessary fields specific to transaction/renewal info
@@ -203,7 +203,7 @@ export const verifyAppleSignedData = async (signedData: string): Promise<Notific
         }
 
 
-        logger.info(`Successfully verified App Store signed data JWS. Transaction ID: ${verifiedPayload.transactionId}`);
+        log.info(`Successfully verified App Store signed data JWS`, { transactionId: verifiedPayload.transactionId });
         return {
             isValid: true,
             payload: verifiedPayload,
@@ -211,7 +211,7 @@ export const verifyAppleSignedData = async (signedData: string): Promise<Notific
 
     } catch (error) {
         const errorMessage = formatError(error);
-        logger.error(`Apple App Store signed data JWS verification failed: ${errorMessage}`);
+        log.error(`Apple App Store signed data JWS verification failed`, { error: errorMessage });
         return { isValid: false, error: errorMessage };
     }
 }; 

@@ -36,36 +36,28 @@ export type Middleware = (
 ) => void | Promise<void>;
 
 /**
- * Resource access permissions
+ * Resource access permissions (as const object)
  */
-export enum Permission {
-  READ = 'read',
-  WRITE = 'write',
-  DELETE = 'delete'
-}
+export const Permission = {
+  READ: 'read',
+  WRITE: 'write',
+  DELETE: 'delete'
+} as const;
+export type Permission = typeof Permission[keyof typeof Permission];
 
 /**
- * Type for API response structure
+ * Application error codes (as const object)
  */
-export interface ApiResponse<T = unknown> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  status?: number;
-}
-
-/**
- * Application error codes
- */
-export enum ErrorCode {
-  AUTHENTICATION = 'authentication_error',
-  AUTHORIZATION = 'authorization_error',
-  VALIDATION = 'validation_error',
-  NOT_FOUND = 'not_found',
-  RATE_LIMIT = 'rate_limit',
-  SERVER_ERROR = 'server_error',
-  EXTERNAL_SERVICE = 'external_service_error'
-}
+export const ErrorCode = {
+  AUTHENTICATION: 'authentication_error',
+  AUTHORIZATION: 'authorization_error',
+  VALIDATION: 'validation_error',
+  NOT_FOUND: 'not_found',
+  RATE_LIMIT: 'rate_limit',
+  SERVER_ERROR: 'server_error',
+  EXTERNAL_SERVICE: 'external_service_error'
+} as const;
+export type ErrorCode = typeof ErrorCode[keyof typeof ErrorCode];
 
 /**
  * Result type for operations that can fail

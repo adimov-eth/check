@@ -1,6 +1,6 @@
 import { redisClient } from '@/config'; // Import the Redis client
 import { formatError } from '@/utils/error-formatter'; // Import error formatter
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 
 // Define TTL in seconds for Redis 'EX' option
 const CACHE_TTL_SECONDS = 10 * 60; // 10 minutes
@@ -16,12 +16,12 @@ const get = async (userId: string): Promise<boolean> => {
   try {
     const exists = await redisClient.exists(key);
     if (exists) {
-      logger.debug(`User existence cache hit for: ${userId}`);
+      log.debug(`User existence cache hit for: ${userId}`);
       return true;
     }
     return false;
   } catch (error) {
-    logger.error(`Redis error checking user existence for ${userId}: ${formatError(error)}`);
+    log.error(`Redis error checking user existence for ${userId}`, { error: formatError(error) });
     // In case of Redis error, bypass cache check to avoid blocking functionality
     return false;
   }
@@ -36,14 +36,14 @@ const set = async (userId: string, exists: boolean): Promise<void> => {
     if (exists) {
       // Set the key with a value of '1' and an expiration time
       await redisClient.set(key, '1', { EX: CACHE_TTL_SECONDS });
-      logger.debug(`Caching user existence for: ${userId} with TTL ${CACHE_TTL_SECONDS}s`);
+      log.debug(`Caching user existence for: ${userId}`, { ttl: CACHE_TTL_SECONDS });
     } else {
       // Remove the key if the user doesn't exist (or if we need to invalidate)
       await redisClient.del(key);
-      logger.debug(`Removing user existence cache entry for: ${userId}`);
+      log.debug(`Removing user existence cache entry for: ${userId}`);
     }
   } catch (error) {
-    logger.error(`Redis error setting user existence for ${userId}: ${formatError(error)}`);
+    log.error(`Redis error setting user existence for ${userId}`, { error: formatError(error) });
     // Error during set is less critical, log and continue
   }
 };

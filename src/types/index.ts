@@ -33,22 +33,25 @@ export interface User {
     updatedAt: number;
   }
   
-  // Subscription entity
+  // Subscription entity (Updated to match v2 migration schema)
   export interface Subscription {
-    id: number;
+    id: string; // Primary key (usually originalTransactionId)
     userId: string;
+    originalTransactionId: string; // Unique identifier from Apple
     productId: string;
-    type: string;
-    originalTransactionId: string;
-    transactionId: string;
-    receiptData: string;
-    environment: string;
-    isActive: boolean;
-    expiresDate?: number;
-    purchaseDate: number;
-    lastVerifiedDate: number;
-    createdAt: number;
-    updatedAt: number;
+    status: string; // e.g., 'active', 'expired', 'grace_period', 'revoked', 'cancelled'
+    environment: 'Sandbox' | 'Production';
+    expiresDate: number | null; // Unix timestamp (seconds), nullable
+    purchaseDate: number; // Unix timestamp (seconds)
+    lastTransactionId: string;
+    lastTransactionInfo: string | null; // JSON string of the last transaction payload
+    lastRenewalInfo: string | null; // JSON string of the last renewal payload
+    appAccountToken: string | null; // UUID if provided during purchase
+    subscriptionGroupIdentifier: string | null;
+    offerType: number | null; // e.g., 1: Intro, 2: Promo, 3: Offer Code
+    offerIdentifier: string | null;
+    createdAt: number; // Unix timestamp (seconds)
+    updatedAt: number; // Unix timestamp (seconds)
   }
   
   // Job payload types

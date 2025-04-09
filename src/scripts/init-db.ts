@@ -1,15 +1,15 @@
 // import { pool } from '@/database'; // Remove pool import
 import { runMigrations } from '@/database/migrations'; // Import migrations
 // import { initSchema } from '@/database/schema'; // Remove schema import
-import { logger } from '@/utils';
+import { log } from '@/utils/logger'; // Use 'log' object
 
 async function main() {
   try {
     // await initSchema(); // Replace with runMigrations
     await runMigrations();
-    logger.info('Database migrations run successfully.'); // Update log message
+    log.info('Database migrations run successfully.'); // Update log message
   } catch (error) {
-    logger.error('Error running database migrations:', error); // Update log message
+    log.error('Error running database migrations:', { error }); // Update log message
     throw error;
   } // finally {
     // Remove finally block as db connection is managed globally

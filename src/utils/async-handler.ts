@@ -3,7 +3,7 @@
  */
 
 import type { NextFunction, Request, Response } from 'express';
-import { logger } from './logger';
+import { log } from './logger';
 
 // Define a type for route handlers to improve type safety
 type AsyncRouteHandler = (req: Request, res: Response, next: NextFunction) => Promise<void | unknown>;
@@ -19,7 +19,7 @@ export const asyncHandler = (handler: AsyncRouteHandler) => {
       await handler(req, res, next);
     } catch (error) {
       // Log the error here for centralized error tracking
-      logger.error(`Unhandled error in route handler: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`Unhandled error in route handler`, { error: error instanceof Error ? error.message : String(error) });
       next(error);
     }
   };

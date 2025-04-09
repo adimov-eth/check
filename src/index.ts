@@ -2,9 +2,10 @@
 import { app } from '@/api';
 import { config } from '@/config';
 // import { initSchema } from '@/database/schema'; // REMOVE THIS LINE
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 // Use the correctly exported names from the websocket module
 import { runMigrations } from '@/database/migrations'; // Import the migration runner
+import { formatError } from '@/utils/error-formatter';
 import { handleUpgrade, initialize, shutdown } from '@/utils/websocket/core';
 import type { IncomingMessage } from 'http';
 import { createServer } from 'http';
@@ -28,7 +29,7 @@ const startServer = async () => {
       const url = new URL(req.url || '', `http://${req.headers.host}`);
       // Ensure the path matches the one used during initialization
       if (url.pathname !== '/ws') {
-        logger.debug(`Rejecting upgrade request for path: ${url.pathname}`);
+        log.debug(`Rejecting upgrade request for path: ${url.pathname}`);
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
         socket.destroy();
         return;
@@ -39,12 +40,12 @@ const startServer = async () => {
     });
 
     server.listen(config.port, () => {
-      logger.info(`Server running on port ${config.port} in ${config.nodeEnv} mode`);
-      logger.info(`WebSocket server accepting connections on ws://localhost:${config.port}/ws`);
+      log.info(`Server running on port ${config.port} in ${config.nodeEnv} mode`);
+      log.info(`WebSocket server accepting connections on ws://localhost:${config.port}/ws`);
     });
 
     const gracefulShutdown = async (): Promise<void> => {
-      logger.info('Shutting down server...');
+      log.info('Shutting down server...');
 
       // Shutdown WebSocket server first using the imported function
       shutdown();
@@ -54,22 +55,22 @@ const startServer = async () => {
 
       server.close(async (err) => {
           if (err) {
-               logger.error(`Error closing HTTP server: ${err.message}`);
+               log.error(`Error closing HTTP server: ${err.message}`);
           } else {
-               logger.info('HTTP server closed');
+               log.info('HTTP server closed');
           }
 
           // Disconnect Redis client (if applicable and managed here)
           // await redisClient.quit();
           // logger.info('Redis client disconnected.');
 
-          logger.info('Shutdown complete');
+          log.info('Shutdown complete');
           process.exit(err ? 1 : 0);
       });
 
       // Force shutdown after timeout
       setTimeout(() => {
-        logger.error('Graceful shutdown timeout exceeded. Forcing exit.');
+        log.error('Graceful shutdown timeout exceeded. Forcing exit.');
         process.exit(1);
       }, 10000); // 10 seconds total timeout
     };
@@ -77,7 +78,7 @@ const startServer = async () => {
     process.on('SIGTERM', gracefulShutdown);
     process.on('SIGINT', gracefulShutdown);
   } catch (error) {
-    logger.error('Server startup failed:', error);
+    log.error('Server startup failed:', { error: formatError(error) });
     process.exit(1);
   }
 };

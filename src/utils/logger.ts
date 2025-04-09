@@ -2,29 +2,38 @@
 import winston from 'winston';
 
 const environment = process.env.NODE_ENV || 'development';
-// Force debug level for better visibility
-const logLevel = process.env.LOG_LEVEL || 'debug';
+// Set default log level based on environment, allow override
+const defaultLogLevel = environment === 'production' ? 'info' : 'debug';
+const logLevel = process.env.LOG_LEVEL || defaultLogLevel;
 
 // Custom format for better console readability
 const consoleFormat = winston.format.printf(({ level, message, timestamp, ...metadata }) => {
-  // Extract useful metadata
+  // Extract core metadata if present
   const { service, method, path, statusCode, duration, userId, requestId, ...rest } = metadata;
-  
-  // Format metadata for display
-  const reqInfo = method && path ? ` [${method} ${path}]` : '';
-  const status = statusCode ? ` (${statusCode})` : '';
-  const timing = duration ? ` ${duration}ms` : '';
-  const user = userId ? ` user:${userId}` : '';
-  const reqId = requestId ? ` req:${requestId}` : '';
-  
-  // Format remaining metadata
-  const meta = Object.keys(rest).length ? 
-    `\n${JSON.stringify(rest, null, 2)}` : '';
-    
-  return `${timestamp} [${level.toUpperCase()}] [${service}]${reqInfo}${status}${timing}${user}${reqId} 🔹 ${message}${meta}`;
+
+  // Base log string
+  let logString = `${timestamp} [${level.toUpperCase()}] [${service}]`;
+
+  // Add request details if available
+  if (method && path) logString += ` ${method} ${path}`;
+  if (statusCode) logString += ` (${statusCode})`;
+  if (duration) logString += ` - ${duration}ms`;
+  if (userId) logString += ` [user:${userId}]`;
+  if (requestId) logString += ` [req:${requestId}]`;
+
+  // Add the main message
+  logString += ` ${message}`;
+
+  // Add remaining metadata if any exists
+  if (Object.keys(rest).length > 0) {
+    logString += ` ${JSON.stringify(rest)}`; // Keep it concise inline
+  }
+
+  return logString;
 });
 
-export const logger = winston.createLogger({
+// Keep the instance internal to this module
+const internalLogger = winston.createLogger({
   level: logLevel,
   format: winston.format.combine(
     winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
@@ -48,29 +57,29 @@ export const logger = winston.createLogger({
 
 // Add file transport in production
 if (environment === 'production') {
-  logger.add(new winston.transports.File({ 
+  internalLogger.add(new winston.transports.File({ 
     filename: 'error.log', 
     level: 'error',
     dirname: 'logs' 
   }));
   
-  logger.add(new winston.transports.File({ 
+  internalLogger.add(new winston.transports.File({ 
     filename: 'combined.log',
     dirname: 'logs'
   }));
 }
 
-// Enhanced logging utility with type support and metadata
+// Enhanced logging utility with type support and metadata - This is the preferred export
 export const log = {
   debug: (message: string, meta: Record<string, unknown> = {}) => 
-    logger.debug(message, { ...meta, timestamp: new Date().toISOString() }),
+    internalLogger.debug(message, { ...meta }),
   info: (message: string, meta: Record<string, unknown> = {}) => 
-    logger.info(message, { ...meta, timestamp: new Date().toISOString() }),
+    internalLogger.info(message, { ...meta }),
   warn: (message: string, meta: Record<string, unknown> = {}) => 
-    logger.warn(message, { ...meta, timestamp: new Date().toISOString() }),
+    internalLogger.warn(message, { ...meta }),
   error: (message: string, meta: Record<string, unknown> = {}) => 
-    logger.error(message, { ...meta, timestamp: new Date().toISOString() }),
+    internalLogger.error(message, { ...meta }),
 };
 
 // Add test log to verify logger is working
-logger.debug('Logger initialized with level: ' + logLevel);
+log.debug('Logger initialized', { level: logLevel, environment });

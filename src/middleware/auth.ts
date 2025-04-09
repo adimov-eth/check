@@ -2,7 +2,7 @@ import { AuthenticationError, NotFoundError } from '@/middleware/error';
 import type { AuthenticatedRequest, Middleware } from '@/types/common';
 import { verifyAppleToken } from '@/utils/apple-auth';
 import { formatError } from '@/utils/error-formatter';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import jwt from 'jsonwebtoken';
 
 /**
@@ -57,13 +57,13 @@ export const requireAuth: Middleware = async (req, res, next) => {
         authReq.email = decodedPayload.email;
       }
     } catch (decodeError) {
-      logger.warn(`Could not decode token payload after verification: ${formatError(decodeError)}`);
+      log.warn(`Could not decode token payload after verification`, { error: formatError(decodeError) });
       // Continue since token was already verified
     }
 
     next();
   } catch (error) {
-    logger.error(`Error in requireAuth: ${formatError(error)}`);
+    log.error(`Error in requireAuth middleware`, { error: formatError(error) });
     next(new AuthenticationError('Unauthorized: Invalid token'));
   }
 };
@@ -120,7 +120,7 @@ export const requireResourceOwnership = (
       (req as AuthenticatedRequest).resource = resource;
       next();
     } catch (error) {
-      logger.error(`Error in requireResourceOwnership: ${formatError(error)}`);
+      log.error(`Error in requireResourceOwnership middleware`, { resourceName, resourceId: req.params.id, userId: (req as AuthenticatedRequest).userId, error: formatError(error) });
       next(error);
     }
   };

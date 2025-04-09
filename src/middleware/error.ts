@@ -1,7 +1,7 @@
 import { config } from '@/config';
 import { ErrorCode } from '@/types/common';
 import type { Request, Response } from 'express';
-import { logger } from '../utils/logger';
+import { log } from '../utils/logger';
 
 interface ExpressError extends Error {
   type?: string;
@@ -105,12 +105,12 @@ export const handleError = (
   // _next: NextFunction
 ): Response => {
   // Log all errors
-  logger.error(`Error: ${err.message}`);
+  log.error(`Error handled`, { 
+    message: err.message, 
+    name: err.name, 
+    stack: (config.nodeEnv !== 'production' ? err.stack : undefined) // Only include stack in non-prod
+  });
   
-  if (err.stack) {
-    logger.debug(err.stack);
-  }
-
   // Handle AppErrors
   if (err instanceof AppError) {
     const { statusCode, code, message, isOperational } = err;

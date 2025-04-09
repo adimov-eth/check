@@ -2,15 +2,15 @@ import { AuthenticationError, NotFoundError, ValidationError } from '@/middlewar
 import { audioRateLimiter } from '@/middleware/rate-limit';
 import { audioQueue } from '@/queues';
 import {
-  createAudioRecord,
-  getAudioById,
-  getConversationAudios,
-  updateAudioStatus
+    createAudioRecord,
+    getAudioById,
+    getConversationAudios,
+    updateAudioStatus
 } from '@/services/audio-service';
 import { getConversationById } from '@/services/conversation-service';
 import type { AuthenticatedRequest } from '@/types/common';
 import { saveFile } from '@/utils/file';
-import { logger } from '@/utils/logger';
+import { log } from '@/utils/logger';
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import multer from 'multer';
@@ -104,7 +104,7 @@ router.post(
         }
       );
 
-      logger.debug(`Created audio record: ${audio.id} for conversation: ${conversationId}`);
+      log.debug(`Created audio record`, { audioId: audio.id, conversationId });
       res.status(201).json({ audio });
     } catch (error) {
       next(error);
@@ -125,7 +125,7 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction): Prom
       throw new NotFoundError(`Audio not found: ${req.params.id}`);
     }
 
-    logger.debug(`Retrieved audio: ${req.params.id} for user: ${userId}`);
+    log.debug(`Retrieved audio`, { audioId: req.params.id, userId });
     res.json({ audio });
   } catch (error) {
     next(error);
@@ -149,7 +149,7 @@ router.get('/conversation/:conversationId', async (req: Request, res: Response, 
     }
 
     const audios = await getConversationAudios(conversationId);
-    logger.debug(`Retrieved ${audios.length} audios for conversation: ${conversationId}`);
+    log.debug(`Retrieved audios for conversation`, { count: audios.length, conversationId });
     res.json({ audios });
   } catch (error) {
     next(error);
@@ -179,7 +179,7 @@ router.patch('/:id/status', async (req: Request, res: Response, next: NextFuncti
     }
 
     await updateAudioStatus(audio.id, status);
-    logger.debug(`Updated audio status: ${req.params.id} to ${status}`);
+    log.debug(`Updated audio status`, { audioId: req.params.id, status });
     res.json({ success: true });
   } catch (error) {
     next(error);
