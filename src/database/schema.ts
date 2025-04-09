@@ -51,3 +51,17 @@ export const initSchema = async (): Promise<void> => {
 
   logger.info('Database schema initialized');
 };
+
+// Execute the schema initialization and handle process exit
+(async () => {
+  try {
+    await initSchema();
+    logger.info('Schema initialization successful.');
+    await pool.close(); // Ensure connections are closed
+    process.exit(0); // Exit successfully
+  } catch (error) {
+    logger.error('Error initializing schema:', error);
+    await pool.close(); // Ensure connections are closed even on error
+    process.exit(1); // Exit with error code
+  }
+})();
