@@ -76,8 +76,9 @@ export async function sendBufferedMessages(ws: WebSocketClient, topic: string): 
         }
 
         if (messagesToSend.length > 0 || expiredCount > 0 || parseErrorCount > 0) {
-            log.info(`[sendBufferedMessages] Attempting to clear Redis buffer ${key} after processing.`);
+            log.info(`[sendBufferedMessages] Attempting to clear Redis buffer ${key} (Sent: ${sentCount}, Expired: ${expiredCount}, Parse Errors: ${parseErrorCount})`);
             try {
+                log.debug(`[sendBufferedMessages] Executing redisClient.del(${key})`);
                 await redisClient.del(key);
                 log.info(`[sendBufferedMessages] Successfully cleared Redis buffer ${key}.`);
             } catch (delError) {
