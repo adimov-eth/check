@@ -5,7 +5,7 @@ import { formatError } from '@/utils/error-formatter';
 import { log } from '@/utils/logger';
 import jwt from 'jsonwebtoken';
 
-/**
+/** 
  * Decoded Apple token payload interface
  */
 interface DecodedAppleToken {
