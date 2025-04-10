@@ -36,6 +36,9 @@ function handlePing(ws: WebSocketClient): void {
 
 // Main message handler for authenticated clients
 export function handleAuthenticatedMessage(ws: WebSocketClient, message: BaseWebSocketIncomingMessage): void {
+  // Log the received message details
+  log.debug(`[WS] Received message from ${ws.userId}: type=${message.type}`, { payload: message.payload });
+
   switch (message.type) {
     case 'subscribe':
       if (typeof message.payload?.topic === 'string') {
