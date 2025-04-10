@@ -1,7 +1,8 @@
-import { config } from '@/config'; // Your config (e.g., Redis connection)
+import { config, redisClient } from '@/config'; // Import redisClient
 import { log } from '@/utils/logger'; // Use 'log' object
-import { sendToSubscribedClients } from '@/utils/websocket'; // Import the specific function
 import { Queue, Worker } from 'bullmq';
+
+const WEBSOCKET_NOTIFICATION_CHANNEL = 'websocket-notifications';
 
 // Assume this is your notification queue
 export const notificationQueue = new Queue('notifications', {
@@ -15,22 +16,29 @@ const notificationWorker = new Worker(
     // Extract data from the job
     const { type, userId, topic, payload, timestamp } = job.data;
 
+    // Prepare the message to be published
+    const messageToPublish = JSON.stringify({
+        userId,
+        topic,
+        data: { // Encapsulate the actual WS message data
+            type,
+            timestamp,
+            payload,
+        }
+    });
+
     try {
-      // Updated usage:
-      // Call the imported function directly
-      sendToSubscribedClients(userId, topic, {
-        type,
-        timestamp,
-        payload,
-      });
-      log.debug(`Processed notification`, { type, userId, topic });
+      // Publish the message to the Redis channel instead of sending directly
+      await redisClient.publish(WEBSOCKET_NOTIFICATION_CHANNEL, messageToPublish);
+      log.debug(`Published notification to Redis`, { channel: WEBSOCKET_NOTIFICATION_CHANNEL, type, userId, topic });
     } catch (error) {
       // Log and re-throw the error for retries
       log.error(
-        `Failed to process notification ${type} for user ${userId}: ${
+        `Failed to publish notification ${type} for user ${userId} to Redis: ${
           error instanceof Error ? error.message : String(error)
         }`
       );
+      // Re-throw the error so BullMQ can retry the job
       throw error;
     }
   },

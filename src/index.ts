@@ -1,24 +1,57 @@
 // src/index.ts
 import { app } from '@/api';
-import { config } from '@/config';
+import { config, redisClient } from '@/config';
 // import { initSchema } from '@/database/schema'; // REMOVE THIS LINE
 import { log } from '@/utils/logger';
 // Use the correctly exported names from the websocket module
 import { runMigrations } from '@/database/migrations'; // Import the migration runner
 import { formatError } from '@/utils/error-formatter';
-import { handleUpgrade, initialize, shutdown } from '@/utils/websocket/core';
+import { handleUpgrade, initialize, sendToSubscribedClients, shutdown } from '@/utils/websocket';
 import type { IncomingMessage } from 'http';
 import { createServer } from 'http';
 import type { Socket } from 'net';
 
+const WEBSOCKET_NOTIFICATION_CHANNEL = 'websocket-notifications';
+
 // Initialize database schema and required directories
 const startServer = async () => {
+  let subscriber: typeof redisClient | null = null; // Keep track of subscriber for shutdown
   try {
     // 1. REMOVE Schema Initialization call (now handled by migrations)
     // await initSchema();
 
     // 2. Run Migrations (handles schema creation and updates)
     await runMigrations(); // This now includes initial schema setup
+
+    // Initialize Redis Subscriber for WebSocket notifications
+    subscriber = redisClient.duplicate();
+    await subscriber.connect();
+    log.info('Redis subscriber client connected for WebSocket notifications.');
+
+    await subscriber.subscribe(WEBSOCKET_NOTIFICATION_CHANNEL, (message, channel) => {
+      log.debug(`Received message from Redis channel '${channel}'`, { rawMessage: message });
+      try {
+        const parsedMessage = JSON.parse(message);
+        const { userId, topic, data } = parsedMessage;
+
+        // Basic validation
+        if (!userId || !topic || !data || !data.type) {
+          log.warn('Received invalid message format from Redis pub/sub', { parsedMessage });
+          return;
+        }
+
+        // Call the local send function (which uses the main process's client map)
+        sendToSubscribedClients(userId, topic, data);
+        log.debug(`Relayed notification via WebSocket`, { userId, topic, type: data.type });
+
+      } catch (error) {
+        log.error(`Error processing message from Redis channel '${channel}'`, { 
+          rawMessage: message, 
+          error: formatError(error) 
+        });
+      }
+    });
+    log.info(`Subscribed to Redis channel: ${WEBSOCKET_NOTIFICATION_CHANNEL}`);
 
     // 3. Start your application server
     const server = createServer(app);
@@ -47,10 +80,21 @@ const startServer = async () => {
     const gracefulShutdown = async (): Promise<void> => {
       log.info('Shutting down server...');
 
-      // Shutdown WebSocket server first using the imported function
+      // Shutdown WebSocket server first
       shutdown();
+      
+      // Unsubscribe and quit Redis subscriber
+      if (subscriber && subscriber.isOpen) {
+        try {
+          await subscriber.unsubscribe(WEBSOCKET_NOTIFICATION_CHANNEL);
+          await subscriber.quit();
+          log.info('Redis subscriber client disconnected.');
+        } catch (redisError) {
+          log.error('Error disconnecting Redis subscriber client', { error: formatError(redisError) });
+        }
+      }
 
-      // Allow some time for WebSocket connections to close before closing HTTP
+      // Allow some time for WS connections and Redis sub to close before closing HTTP
       await new Promise(resolve => setTimeout(resolve, 2500)); // Adjust delay if needed
 
       server.close(async (err) => {
@@ -78,6 +122,10 @@ const startServer = async () => {
     process.on('SIGTERM', gracefulShutdown);
     process.on('SIGINT', gracefulShutdown);
   } catch (error) {
+    // Close subscriber if initialization failed
+    if (subscriber && subscriber.isOpen) {
+      try { await subscriber.quit(); } catch (e) { log.error('Error closing Redis subscriber during failed startup', { error: formatError(e) }); }
+    }
     log.error('Server startup failed:', { error: formatError(error) });
     process.exit(1);
   }
