@@ -148,6 +148,15 @@ export function sendToSubscribedClients(userId: string, topic: string, data: Web
     const userClients = getClientsByUserId().get(userId);
     log.debug(`Attempting to send message to topic ${topic} for user ${userId}`);
 
+    if (userClients) {
+        log.debug(`[sendToSubscribedClients] Found ${userClients.size} client(s) in map for user ${userId}. Checking states...`);
+        userClients.forEach(c => {
+            log.debug(`[sendToSubscribedClients] Client for ${userId}: userId=${c.userId}, readyState=${c.readyState}, isAuth=${!c.isAuthenticating}, subscribed=${c.subscribedTopics.has(topic)}`);
+        });
+    } else {
+        log.debug(`[sendToSubscribedClients] No client set found in map for user ${userId}.`);
+    }
+
     if (!userClients || userClients.size === 0) {
         log.warn(`No connected clients found for user ${userId}. Buffering message for topic ${topic}.`);
         bufferMessage(userId, topic, data);
