@@ -29,21 +29,34 @@ function isAuthMessage(data: unknown): data is AuthMessage {
 }
 
 async function performAuthentication(token: string, clientIp: string): Promise<Result<{ userId: string }, Error>> {
+    let result: Result<{ userId: string }, Error> | undefined;
+
+    // 1. Check cache
     const cachedResult = await getCachedAppleAuth(token);
     if (cachedResult) {
         log.debug(`Using cached auth for client (IP: ${clientIp})`);
-        return cachedResult;
+        result = cachedResult;
+    } else {
+        // 2. Verify with Apple if not cached
+        log.debug(`Verifying token with Apple for client (IP: ${clientIp})`);
+        const verificationResult = await verifyAppleToken(token);
+        await cacheAppleAuthResult(token, verificationResult); // Cache the raw result
+        result = verificationResult;
     }
 
-    log.debug(`Verifying token with Apple for client (IP: ${clientIp})`);
-    const verificationResult = await verifyAppleToken(token);
-    await cacheAppleAuthResult(token, verificationResult);
-
-    if (verificationResult.success) {
-        // Prefix user ID upon successful verification
-        return { success: true, data: { userId: `apple:${verificationResult.data.userId}` } };
+    // 3. Ensure prefix is added before returning, regardless of source
+    if (result?.success) {
+        // Ensure the userId has the prefix
+        const rawUserId = result.data.userId;
+        const prefixedUserId = rawUserId.startsWith('apple:') ? rawUserId : `apple:${rawUserId}`;
+        return { success: true, data: { userId: prefixedUserId } };
+    } else if (result) {
+        // Return failure result as is
+        return result;
     } else {
-        return { success: false, error: verificationResult.error };
+        // Should not happen if cache/verify always return a result, but handle defensively
+        log.error('performAuthentication failed to get a result from cache or verification');
+        return { success: false, error: new Error('Authentication process failed internally') };
     }
 }
 
