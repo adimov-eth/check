@@ -1,5 +1,5 @@
 // src/api/index.ts
-import { requireAuth } from '@/middleware/auth';
+import { requireAuth } from '@/middleware/auth'; // Keep the import if other routes use it globally
 import { handleError } from '@/middleware/error';
 import { apiRateLimiter } from '@/middleware/rate-limit';
 import { log } from '@/utils/logger';
@@ -26,23 +26,27 @@ app.use(cors({
 app.use((req, res, next) => {
   log.debug(`Request received`, { method: req.method, path: req.path });
   const start = Date.now();
-  
+
   res.on('finish', () => {
     const duration = Date.now() - start;
     log.debug(`Request finished`, { method: req.method, path: req.path, status: res.statusCode, durationMs: duration });
   });
-  
+
   next();
 });
 
 // Parse JSON requests globally for all routes that might need it.
 app.use(express.json());
 
-// Apply authentication middleware to protected routes
+// Apply authentication middleware to protected routes *selectively*
+// Remove the global application for /users
+// app.use('/users', requireAuth); // <-- REMOVE THIS LINE
+
+// Apply requireAuth specifically to other top-level routes if needed
 app.use('/audio', requireAuth);
 app.use('/conversations', requireAuth);
 app.use('/subscriptions', requireAuth);
-app.use('/users', requireAuth);
+// Note: /users routes will apply requireAuth internally where needed
 
 // Default rate limiter
 app.use(apiRateLimiter);
@@ -53,7 +57,7 @@ app.get('/health', (_, res) => {
 });
 
 // Routes
-app.use('/users', userRoutes);
+app.use('/users', userRoutes); // Mount the user router
 app.use('/audio', audioRoutes);
 app.use('/conversations', conversationRoutes);
 app.use('/subscriptions', subscriptionRoutes);

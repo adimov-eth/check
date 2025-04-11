@@ -11,10 +11,12 @@ export const createAudioRecord = async ({
   conversationId,
   userId,
   audioFile,
+  audioKey,
 }: {
   conversationId: string;
   userId: string;
   audioFile: string;
+  audioKey: string;
 }): Promise<Audio> => {
   return await transaction(async () => {
     try {
@@ -33,31 +35,39 @@ export const createAudioRecord = async ({
         throw new Error(`Conversation ${conversationId} not found or does not belong to user ${userId}`);
       }
       
-      // Check if we've reached the audio limit for this conversation
-      const audioCountResult = await query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM audios WHERE conversationId = ?',
-        [conversationId]
+      const existingAudios = await query<{ count: number, recordingType: string, existingKey: number }>(
+        `SELECT 
+           COUNT(*) as count,
+           c.recordingType,
+           MAX(CASE WHEN a.audioKey = ? THEN 1 ELSE 0 END) as existingKey
+         FROM conversations c
+         LEFT JOIN audios a ON c.id = a.conversationId
+         WHERE c.id = ?
+         GROUP BY c.id`,
+        [audioKey, conversationId]
       );
-      
-      const audioCount = audioCountResult[0].count;
-      
-      const conversationResult = await query<{ recordingType: string }>(
-        'SELECT recordingType FROM conversations WHERE id = ?',
-        [conversationId]
-      );
-      
-      const conversation = conversationResult[0];
-      
-      const maxAudios = conversation.recordingType === 'separate' ? 2 : 1;
+
+      const result = existingAudios[0];
+      if (!result) {
+        throw new Error(`Could not retrieve conversation details for limit check: ${conversationId}`);
+      }
+
+      const { count: audioCount, recordingType, existingKey } = result;
+
+      if (existingKey === 1) {
+        throw new Error(`Audio with key "${audioKey}" already exists for conversation ${conversationId}`);
+      }
+
+      const maxAudios = recordingType === 'separate' ? 2 : 1;
       if (audioCount >= maxAudios) {
         throw new Error(`Maximum number of audios (${maxAudios}) reached for conversation ${conversationId}`);
       }
       
       const audios = await query<Audio>(
-        `INSERT INTO audios (conversationId, userId, audioFile, status)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO audios (conversationId, userId, audioFile, audioKey, status)
+         VALUES (?, ?, ?, ?, ?)
          RETURNING *`,
-        [conversationId, userId, audioFile, 'uploaded']
+        [conversationId, userId, audioFile, audioKey, 'uploaded']
       );
       
       const audio = audios[0];
@@ -67,7 +77,7 @@ export const createAudioRecord = async ({
       
       return audio;
     } catch (error) {
-      log.error(`Error creating audio record`, { error: formatError(error) });
+      log.error(`Error creating audio record`, { conversationId, audioKey, error: formatError(error) });
       throw error;
     }
   });
@@ -85,7 +95,7 @@ export const getAudioById = async (audioId: number, userId: string): Promise<Aud
     
     return audios[0] || null;
   } catch (error) {
-    log.error(`Error fetching audio by ID`, { error: formatError(error) });
+    log.error(`Error fetching audio by ID`, { audioId, userId, error: formatError(error) });
     throw error;
   }
 };
@@ -100,7 +110,7 @@ export const getConversationAudios = async (conversationId: string): Promise<Aud
       [conversationId]
     );
   } catch (error) {
-    log.error(`Error fetching conversation audios`, { error: formatError(error) });
+    log.error(`Error fetching conversation audios`, { conversationId, error: formatError(error) });
     throw error;
   }
 };
@@ -125,6 +135,7 @@ export const updateAudioStatus = async (
       const audioExists = audioExistsResult[0]?.exists_flag === 1;
       
       if (!audioExists) {
+        log.warn(`Attempted to update status for non-existent audio ID: ${audioId}`);
         throw new Error(`Audio ${audioId} not found`);
       }
       
@@ -153,8 +164,9 @@ export const updateAudioStatus = async (
          WHERE id = ?`,
         params
       );
+      log.debug("Audio status updated", { audioId, status });
     } catch (error) {
-      log.error(`Error updating audio status`, { error: formatError(error) });
+      log.error(`Error updating audio status`, { audioId, status, error: formatError(error) });
       throw error;
     }
   });
@@ -163,15 +175,13 @@ export const updateAudioStatus = async (
 // Get audio by file path
 export const getAudioByPath = async (filePath: string): Promise<Audio | null> => {
   try {
-    return await transaction(async () => {
-      const audios = await query<Audio>(
-        `SELECT * FROM audios WHERE audioFile = ?`,
-        [filePath]
-      );
-      return audios[0] || null;
-    });
+    const audios = await query<Audio>(
+      `SELECT * FROM audios WHERE audioFile = ?`,
+      [filePath]
+    );
+    return audios[0] || null;
   } catch (error) {
-    log.error(`Failed to get audio by path`, { error: formatError(error) });
-    return null;
+    log.error(`Failed to get audio by path`, { filePath, error: formatError(error) });
+    throw error;
   }
 };

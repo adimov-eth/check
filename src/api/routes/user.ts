@@ -49,7 +49,9 @@ const getCurrentUser = async (
           if (createdUser) {
             log.info(`Successfully created and retrieved user`, { userId });
             return res.json({
-              ...createdUser,
+              id: createdUser.id,
+              email: createdUser.email,
+              name: createdUser.name,
               usage: {
                 currentUsage: usageStats.currentUsage,
                 limit: usageStats.limit,
@@ -70,7 +72,9 @@ const getCurrentUser = async (
     
     log.debug(`User data retrieved successfully`, { userId });
     return res.json({
-      ...user,
+      id: user.id,
+      email: user.email,
+      name: user.name,
       usage: {
         currentUsage: usageStats.currentUsage,
         limit: usageStats.limit,
@@ -80,7 +84,7 @@ const getCurrentUser = async (
       }
     });
   } catch (error) {
-    log.error(`Error retrieving user data`, { error: formatError(error) });
+    log.error(`Error retrieving user data`, { userId, error: formatError(error) });
     next(error);
   }
 };
@@ -94,7 +98,7 @@ const appleAuth = async (
   res: Response,
   next: NextFunction
 ) => {
-  const { identityToken, fullName } = req.body;
+  const { identityToken, fullName, email } = req.body;
 
   if (!identityToken) {
     return res.status(400).json({
@@ -109,7 +113,7 @@ const appleAuth = async (
   }
 
   try {
-    const authResult = await authenticateWithApple(identityToken, formattedName);
+    const authResult = await authenticateWithApple(identityToken, email, formattedName);
 
     if (!authResult.success) {
       if (authResult.code === 'EMAIL_ALREADY_EXISTS') {

@@ -25,10 +25,11 @@ export interface User {
     id: number;
     conversationId: string;
     userId: string;
-    audioFile?: string;
-    transcription?: string;
-    status: 'uploaded' | 'processing' | 'transcribed' | 'failed';
-    errorMessage?: string;
+    audioFile: string | null; // Can become null after processing
+    audioKey: string; // <-- Add this field
+    transcription: string | null;
+    status: string;
+    errorMessage: string | null;
     createdAt: number;
     updatedAt: number;
   }
@@ -60,6 +61,7 @@ export interface User {
     conversationId: string;
     audioPath: string;
     userId: string;
+    audioKey: string;
   }
   
   export interface GptJob {

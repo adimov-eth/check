@@ -4,7 +4,7 @@ import { log } from '@/utils/logger';
 import { type Database, type SQLQueryBindings } from 'bun:sqlite'; // Import Database type and SQLQueryBindings
 import { dbInstance } from './index'; // Import the direct instance
 
-const TARGET_SCHEMA_VERSION = 2; // Increment this for future migrations
+const TARGET_SCHEMA_VERSION = 3; // Increment for audioKey migration
 
 export const runMigrations = async (): Promise<void> => {
   try {
@@ -174,12 +174,25 @@ export const runMigrations = async (): Promise<void> => {
           await db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_originalTransactionId ON subscriptions(originalTransactionId);'); // Ensure uniqueness
 
           // 6. Update schema version *within the transaction*
-          await db.exec(`PRAGMA user_version = ${TARGET_SCHEMA_VERSION}`);
+          await db.exec(`PRAGMA user_version = 2`);
       });
       log.info(`Successfully migrated subscriptions table to v2`, { schemaVersion: TARGET_SCHEMA_VERSION });
     }
 
-    // Add future migrations here using `if (currentVersion < NEW_VERSION) { ... }`
+    if (currentVersion < 3) {
+      log.info('Running migration: Add audioKey to audios table (v2 -> v3)...');
+      await runTransaction(async (db: Database) => {
+          // Add audioKey column as TEXT, initially allowing NULL for existing records
+          await db.exec(`ALTER TABLE audios ADD COLUMN audioKey TEXT;`);
+
+          // Create a compound index for faster lookups
+          await db.exec('CREATE INDEX IF NOT EXISTS idx_audios_conversationId_audioKey ON audios(conversationId, audioKey);');
+
+          // Update schema version
+          await db.exec(`PRAGMA user_version = 3`);
+      });
+      log.info(`Successfully added audioKey column and index to audios table`);
+    }
 
   } catch (error) {
     log.error(`Database migration failed`, { error: formatError(error) });
