@@ -1,105 +1,118 @@
-import { AuthenticationError, NotFoundError } from '@/middleware/error';
+// /Users/adimov/Developer/final/check/src/middleware/auth.ts
 import { verifySessionToken } from '@/services/session-service';
-import type { AuthenticatedRequest, Middleware } from '@/types/common';
+import type { AuthenticatedRequest, Resource } from '@/types/common'; // Import Resource type
 import { formatError } from '@/utils/error-formatter';
 import { log } from '@/utils/logger';
+import type { NextFunction, Request, Response } from 'express';
+// --- FIX: Import AuthorizationError instead of ForbiddenError ---
+import { AuthenticationError, AuthorizationError, NotFoundError } from './error';
+// --- End Fix ---
 
-/**
- * Extract token from Authorization header
- */
-const extractToken = (req: AuthenticatedRequest): string | null => {
+// Type for the function that fetches a resource by ID
+type GetResourceById<T extends Resource> = (id: string) => Promise<T | null>;
+
+export const requireAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
   const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  return authHeader.slice(7);
-};
 
-/**
- * Middleware for Session Token authentication
- */
-export const requireAuth: Middleware = async (req, res, next) => {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return next(new AuthenticationError('Unauthorized: Missing or invalid Bearer token'));
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return next(new AuthenticationError('Unauthorized: Token is missing'));
+  }
+
   try {
-    const token = extractToken(req as AuthenticatedRequest);
-    if (!token) {
-      return next(new AuthenticationError('Unauthorized: No token provided'));
-    }
+    const result = await verifySessionToken(token);
 
-    // Verify the session token
-    const result = verifySessionToken(token);
     if (!result.success) {
-      // Pass the specific AuthenticationError from verifySessionToken
+      // Forward the specific error from verifySessionToken
       return next(result.error);
     }
 
-    // Attach user info from the session payload to the request
+    const payload = result.data;
+
+    // Attach user details to the request object
     const authReq = req as AuthenticatedRequest;
-    authReq.userId = result.data.userId;
-    // If you add email/name to JWT payload, extract them here:
-    // authReq.email = result.data.email;
-    // authReq.fullName = result.data.fullName;
+    authReq.userId = payload.userId;
+    // Optionally attach other details if needed by handlers
+    // authReq.email = payload.email; // If email is in session payload
+    // authReq.fullName = ... // If name is in session payload
 
-    log.debug(`Session token validated for user`, { userId: authReq.userId });
-    next();
+    log.debug(`Session token validated for user`, { userId: payload.userId });
+    next(); // Proceed to the next middleware or route handler
   } catch (error) {
-    // Catch unexpected errors during middleware execution
-    log.error(`Error in requireAuth middleware`, { error: formatError(error) });
-    next(new AuthenticationError('Unauthorized: Error processing token'));
+    // Catch unexpected errors during verification
+    log.error('Unexpected error during token verification', { error: formatError(error) });
+    next(new AuthenticationError('Token verification failed unexpectedly'));
   }
 };
 
-/**
- * Extract user ID from authenticated request
- */
-export const getUserId = (req: AuthenticatedRequest): string | null => req.userId ?? null;
-
-/**
- * Middleware to verify user ID exists and attach it to request
- * This enhances the request with a userId property for convenience
- */
-export const requireUserId: Middleware = (req, res, next): void => {
-  const userId = getUserId(req as AuthenticatedRequest);
-  if (!userId) {
-    return next(new AuthenticationError('Unauthorized: No user ID found'));
-  }
-  next();
+// Helper to safely get userId - assumes requireAuth ran successfully
+export const getUserId = (req: AuthenticatedRequest): string | undefined => {
+  return req.userId;
 };
 
+
 /**
- * Higher-order middleware to verify resource ownership
- * Confirms the authenticated user owns the requested resource
- * 
- * @param resourceFetcher Function to fetch the resource
- * @param resourceName Name of the resource (for error messages)
+ * Middleware factory to ensure the authenticated user owns the requested resource.
+ * Assumes `requireAuth` has already run and `req.userId` is populated.
+ * Fetches the resource using the provided getter function and attaches it to `req.resource`.
+ *
+ * @param getResourceById - An async function that takes a resource ID and returns the resource or null.
+ * @param resourceName - The name of the resource type (e.g., 'Conversation') for error messages.
+ * @param idParamName - The name of the parameter in req.params containing the resource ID. Defaults to 'id'.
+ * @returns An Express middleware function.
  */
-export const requireResourceOwnership = (
-  resourceFetcher: (resourceId: string, userId: string) => Promise<unknown>,
-  resourceName: string = 'Resource'
-): Middleware => {
-  return async (req, res, next): Promise<void> => {
+export const requireResourceOwnership = <T extends Resource>({
+  getResourceById,
+  resourceName = 'Resource',
+  idParamName = 'id',
+}: {
+  getResourceById: GetResourceById<T>;
+  resourceName?: string;
+  idParamName?: string;
+}) => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const authReq = req as AuthenticatedRequest;
+    const { userId } = authReq;
+    const resourceId = req.params[idParamName]; // Get ID using the specified param name
+
+    if (!userId) {
+      // Should not happen if requireAuth is used first, but good practice
+      return next(new AuthenticationError('User ID not found on request. Ensure requireAuth runs first.'));
+    }
+
+    if (!resourceId) {
+      return next(new Error(`Resource ID not found in request parameters (expected '${idParamName}').`));
+    }
+
     try {
-      // First make sure we have a userId
-      const userId = (req as AuthenticatedRequest).userId;
-      if (!userId) {
-        return next(new AuthenticationError('Unauthorized: No user ID found'));
-      }
-      
-      // Get the resource ID from URL params
-      const resourceId = req.params.id;
-      if (!resourceId) {
-        return next(new NotFoundError(`${resourceName} ID not provided`));
-      }
-      
-      // Fetch the resource and verify ownership
-      const resource = await resourceFetcher(resourceId, userId);
+      const resource = await getResourceById(resourceId);
+
       if (!resource) {
-        return next(new NotFoundError(`${resourceName} not found: ${resourceId}`));
+        log.warn(`${resourceName} not found`, { [idParamName]: resourceId, userId });
+        return next(new NotFoundError(`${resourceName} not found`));
       }
-      
-      // Attach the resource to the request for use in the route handler
-      (req as AuthenticatedRequest).resource = resource;
+
+      // Check ownership
+      if (resource.userId !== userId) {
+        log.warn(`User attempted to access unowned ${resourceName}`, { [idParamName]: resourceId, ownerUserId: resource.userId, requestingUserId: userId });
+        return next(new AuthorizationError(`You do not have permission to access this ${resourceName}`));
+      }
+
+      // Attach the fetched resource to the request for subsequent handlers
+      authReq.resource = resource;
+      log.debug(`${resourceName} ownership verified`, { [idParamName]: resourceId, userId });
       next();
     } catch (error) {
-      log.error(`Error in requireResourceOwnership middleware`, { resourceName, resourceId: req.params.id, userId: (req as AuthenticatedRequest).userId, error: formatError(error) });
-      next(error);
+      log.error(`Error fetching or verifying ${resourceName} ownership`, { [idParamName]: resourceId, userId, error: formatError(error) });
+      next(error); // Pass other errors (e.g., database errors) to the main error handler
     }
   };
 };

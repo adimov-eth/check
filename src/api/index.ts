@@ -9,7 +9,7 @@ import helmet from 'helmet';
 import audioRoutes from './routes/audio';
 import conversationRoutes from './routes/conversation';
 import subscriptionRoutes from './routes/subscription';
-import userRoutes from './routes/user';
+import userRoutes from './routes/user'; // Import user routes
 
 // Create Express app
 export const app = express();
@@ -38,10 +38,6 @@ app.use((req, res, next) => {
 // Parse JSON requests globally for all routes that might need it.
 app.use(express.json());
 
-// Apply authentication middleware to protected routes *selectively*
-// Remove the global application for /users
-// app.use('/users', requireAuth); // <-- REMOVE THIS LINE
-
 // Apply requireAuth specifically to other top-level routes if needed
 app.use('/audio', requireAuth);
 app.use('/conversations', requireAuth);
@@ -57,7 +53,7 @@ app.get('/health', (_, res) => {
 });
 
 // Routes
-app.use('/users', userRoutes); // Mount the user router
+app.use('/users', userRoutes); // Mount the user router - NO global requireAuth here
 app.use('/audio', audioRoutes);
 app.use('/conversations', conversationRoutes);
 app.use('/subscriptions', subscriptionRoutes);

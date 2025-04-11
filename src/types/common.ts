@@ -1,7 +1,4 @@
-/**
- * Common type definitions used across the application
- */
-
+// src/types/common.ts
 import type { NextFunction, Request, Response } from 'express';
 
 /**
@@ -14,17 +11,17 @@ export interface AuthenticatedRequest extends Request {
     givenName?: string;
     familyName?: string;
   };
-  resource?: unknown;
+  resource?: Resource; // Use the base Resource type here
 }
 
 /**
- * Type for request handler functions
+ * Type for request handler functions - Ensure it returns a Promise
  */
 export type RequestHandler = (
   req: Request | AuthenticatedRequest,
   res: Response,
   next: NextFunction
-) => Promise<unknown>;
+) => Promise<void>; // Changed return type to Promise<void>
 
 /**
  * Type for middleware functions
@@ -62,6 +59,14 @@ export type ErrorCode = typeof ErrorCode[keyof typeof ErrorCode];
 /**
  * Result type for operations that can fail
  */
-export type Result<T, E = Error> = 
+export type Result<T, E = Error> =
   | { success: true; data: T }
-  | { success: false; error: E; code?: string };
+  | { success: false; error: E; code?: string }; // Optional code for specific errors
+
+
+// Base type for resources that have an owner
+export interface Resource {
+  id: string | number; // Allow string or number ID
+  userId: string; // Crucial for ownership check
+  // other common fields if any
+}

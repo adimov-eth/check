@@ -1,6 +1,6 @@
 // src/api/routes/audio.ts
-import { requireAuth } from '@/middleware/auth'; // <-- Import requireAuth
-import { NotFoundError, ValidationError } from '@/middleware/error';
+import { requireAuth, requireResourceOwnership } from '@/middleware/auth';
+import { AuthorizationError, NotFoundError, ValidationError } from '@/middleware/error';
 import { audioRateLimiter } from '@/middleware/rate-limit';
 import { audioQueue } from '@/queues';
 import {
@@ -10,8 +10,9 @@ import {
   updateAudioStatus
 } from '@/services/audio-service';
 import { getConversationById } from '@/services/conversation-service';
+import type { Audio } from '@/types';
 import type { AuthenticatedRequest } from '@/types/common';
-import { asyncHandler } from '@/utils/async-handler'; // <-- Import asyncHandler
+import { asyncHandler } from '@/utils/async-handler';
 import { saveFile } from '@/utils/file';
 import { log } from '@/utils/logger';
 import type { Request, Response } from 'express';
@@ -73,10 +74,13 @@ router.post(
 
     const { conversationId, audioKey } = validationResult.data; // Get audioKey
 
-    // Check if conversation exists and belongs to user
-    const conversation = await getConversationById(conversationId, userId);
+    // Check if conversation exists
+    const conversation = await getConversationById(conversationId);
     if (!conversation) {
       throw new NotFoundError(`Conversation not found: ${conversationId}`);
+    }
+    if (conversation.userId !== userId) {
+        throw new AuthorizationError(`User does not own conversation ${conversationId}`);
     }
 
     // Validate file upload
@@ -114,12 +118,11 @@ router.post(
     );
 
     log.debug(`Created audio record and queued for processing`, { audioId: audio.id, conversationId, audioKey });
-    // Return minimal success response, client likely tracks via websockets
     res.status(201).json({
         success: true,
         message: "Audio uploaded and queued for processing.",
-        audioId: audio.id, // Optionally return ID
-        url: filePath // Optionally return server-side path (for debugging?)
+        audioId: audio.id,
+        url: filePath
     });
   })
 );
@@ -128,20 +131,12 @@ router.post(
 router.get(
     '/:id',
     requireAuth, // Apply auth
+    requireResourceOwnership({ getResourceById: getAudioById, resourceName: 'Audio' }),
     asyncHandler(async (req: Request, res: Response): Promise<void> => {
-        const userId = (req as AuthenticatedRequest).userId;
-        const audioId = Number(req.params.id);
+        const { resource, userId } = req as AuthenticatedRequest;
+        const audio = resource as Audio;
 
-        if (isNaN(audioId)) {
-            throw new ValidationError('Invalid audio ID format.');
-        }
-
-        const audio = await getAudioById(audioId, userId);
-        if (!audio) {
-            throw new NotFoundError(`Audio not found: ${audioId}`);
-        }
-
-        log.debug(`Retrieved audio`, { audioId, userId });
+        log.debug(`Retrieved audio`, { audioId: audio.id, userId });
         res.json({ audio }); // Return the full audio object
     })
 );
@@ -151,15 +146,10 @@ router.get(
 router.get(
     '/conversation/:conversationId',
     requireAuth, // Apply auth
+    requireResourceOwnership({ getResourceById: getConversationById, resourceName: 'Conversation', idParamName: 'conversationId' }),
     asyncHandler(async (req: Request, res: Response): Promise<void> => {
         const userId = (req as AuthenticatedRequest).userId;
         const { conversationId } = req.params;
-
-        // Verify conversation exists and belongs to user (optional but good practice)
-        const conversation = await getConversationById(conversationId, userId);
-        if (!conversation) {
-            throw new NotFoundError(`Conversation not found: ${conversationId}`);
-        }
 
         const audios = await getConversationAudios(conversationId);
         log.debug(`Retrieved audios for conversation`, { count: audios.length, conversationId, userId });
@@ -172,30 +162,21 @@ router.get(
 router.patch(
     '/:id/status',
     requireAuth, // Apply auth
+    requireResourceOwnership({ getResourceById: getAudioById, resourceName: 'Audio' }),
     asyncHandler(async (req: Request, res: Response): Promise<void> => {
-        const userId = (req as AuthenticatedRequest).userId;
-        const audioId = Number(req.params.id);
-
-        if (isNaN(audioId)) {
-            throw new ValidationError('Invalid audio ID format.');
-        }
+        const { resource, userId } = req as AuthenticatedRequest;
+        const audio = resource as Audio;
 
         // Validate request body
         const validationResult = updateStatusSchema.safeParse(req.body);
         if (!validationResult.success) {
-            throw new ValidationError(`Invalid status: ${validationResult.error.message}`);
+            throw new ValidationError(`Invalid status: ${validationResult.error.errors.map(e => e.message).join(', ')}`);
         }
 
         const { status } = validationResult.data;
 
-        // Verify audio exists and belongs to user before allowing status update
-        const audio = await getAudioById(audioId, userId);
-        if (!audio) {
-            throw new NotFoundError(`Audio not found: ${audioId}`);
-        }
-
-        await updateAudioStatus(audio.id, status);
-        log.debug(`Updated audio status`, { audioId, status, userId });
+        await updateAudioStatus(audio.id as number, status);
+        log.debug(`Updated audio status`, { audioId: audio.id, status, userId });
         res.json({ success: true });
     })
 );

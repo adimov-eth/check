@@ -1,12 +1,13 @@
+// /Users/adimov/Developer/final/check/src/api/routes/conversation.ts
 import { requireAuth, requireResourceOwnership } from '@/middleware/auth';
 import { ValidationError } from '@/middleware/error';
 import { conversationsRateLimiter } from '@/middleware/rate-limit';
 import { gptQueue } from '@/queues';
 import {
-    createConversation,
-    getConversationById,
-    getUserConversations,
-    updateConversationStatus
+  createConversation,
+  getConversationById,
+  getUserConversations,
+  updateConversationStatus
 } from '@/services/conversation-service';
 import { canCreateConversation } from '@/services/usage-service';
 import type { Conversation } from '@/types';
@@ -42,11 +43,14 @@ const createNewConversation: RequestHandler = async (req, res) => {
   // Check if user can create a new conversation (usage limits)
   const usageCheck = await canCreateConversation(userId);
   if (!usageCheck.canCreate) {
-    return res.status(403).json({ 
+    // --- FIX: Remove return ---
+    res.status(403).json({
       error: 'Usage limit reached',
       reason: usageCheck.reason,
       status: 403
     });
+    return; // Use return; to exit early without returning the response object
+    // --- End Fix ---
   }
 
   const { mode, recordingType } = validationResult.data;
@@ -57,7 +61,8 @@ const createNewConversation: RequestHandler = async (req, res) => {
   });
 
   log.debug(`Created new conversation`, { conversationId: conversation.id, userId });
-  return res.status(201).json({ 
+  // --- FIX: Remove return ---
+  res.status(201).json({
     success: true,
     conversation: {
       id: conversation.id,
@@ -66,6 +71,7 @@ const createNewConversation: RequestHandler = async (req, res) => {
       status: 'created'
     }
   });
+  // --- End Fix ---
 };
 
 /**
@@ -76,7 +82,9 @@ const getConversation: RequestHandler = async (req, res) => {
   const conversation = resource as Conversation;
 
   log.debug(`Retrieved conversation`, { conversationId: req.params.id, userId });
-  return res.status(200).json({ conversation });
+  // --- FIX: Remove return ---
+  res.status(200).json({ conversation });
+  // --- End Fix ---
 };
 
 /**
@@ -87,7 +95,9 @@ const getAllConversations: RequestHandler = async (req, res) => {
 
   const conversations = await getUserConversations(userId);
   log.debug(`Retrieved conversations`, { count: conversations.length, userId });
-  return res.status(200).json({ conversations });
+  // --- FIX: Remove return ---
+  res.status(200).json({ conversations });
+  // --- End Fix ---
 };
 
 /**
@@ -106,16 +116,18 @@ const processConversation: RequestHandler = async (req, res) => {
   await gptQueue.add('process-conversation', { conversationId, userId });
 
   log.debug(`Started processing conversation`, { conversationId, userId });
-  return res.status(202).json({ 
-    message: 'Processing started', 
-    conversationId 
+  // --- FIX: Remove return ---
+  res.status(202).json({
+    message: 'Processing started',
+    conversationId
   });
+  // --- End Fix ---
 };
 
 // Define routes with middleware
 router.post('/', requireAuth, asyncHandler(createNewConversation));
-router.get('/:id', requireAuth, requireResourceOwnership(getConversationById, 'Conversation'), asyncHandler(getConversation));
+router.get('/:id', requireAuth, requireResourceOwnership({ getResourceById: getConversationById, resourceName: 'Conversation' }), asyncHandler(getConversation));
 router.get('/', requireAuth, asyncHandler(getAllConversations));
-router.post('/:id/process', requireAuth, requireResourceOwnership(getConversationById, 'Conversation'), asyncHandler(processConversation));
+router.post('/:id/process', requireAuth, requireResourceOwnership({ getResourceById: getConversationById, resourceName: 'Conversation' }), asyncHandler(processConversation));
 
 export default router;
