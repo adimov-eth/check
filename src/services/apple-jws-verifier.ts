@@ -1,7 +1,9 @@
+// /Users/adimov/Developer/final/check/src/services/apple-jws-verifier.ts
+// Modified to correctly handle multiple bundle IDs during identity token verification.
 import { config } from '@/config'; // Import config for bundleId and environment
 import { formatError } from '@/utils/error-formatter';
 import { log } from '@/utils/logger';
-import { type JWTPayload, createRemoteJWKSet, jwtVerify } from 'jose';
+import { type JWTPayload, createRemoteJWKSet, errors as joseErrors, jwtVerify } from 'jose'; // Import joseErrors
 
 // Define the expected payload structure *after* verification & decoding
 // Based on: https://developer.apple.com/documentation/appstoreserverapi/jwstransaction
@@ -97,49 +99,45 @@ async function getAppleJWKSet(): Promise<ReturnType<typeof createRemoteJWKSet>> 
 export const verifyAppleIdentityTokenJws = async (identityToken: string): Promise<IdentityTokenVerificationResult> => {
     try {
         const jwkSet = await getAppleJWKSet();
+        const validBundleIds = [config.appleBundleId, ...config.validAppleBundleIds.filter(id => id !== config.appleBundleId)]; // Ensure primary is first
 
-        // First try with the primary bundle ID
-        try {
-            const { payload } = await jwtVerify(identityToken, jwkSet, {
-                issuer: 'https://appleid.apple.com',
-                audience: config.appleBundleId,
-                algorithms: ['ES256'],
-            });
-            return handleSuccessfulVerification(payload);
-        } catch (primaryError) {
-            // If primary bundle ID fails, try other valid bundle IDs
-            for (const bundleId of config.validAppleBundleIds) {
-                if (bundleId === config.appleBundleId) continue; // Skip primary, already tried
-                try {
-                    const { payload } = await jwtVerify(identityToken, jwkSet, {
-                        issuer: 'https://appleid.apple.com',
-                        audience: bundleId,
-                        algorithms: ['ES256'],
-                    });
-                    return handleSuccessfulVerification(payload);
-                } catch {
-                    // Continue to next bundle ID
-                    continue;
+        for (const bundleId of validBundleIds) {
+            try {
+                const { payload } = await jwtVerify(identityToken, jwkSet, {
+                    issuer: 'https://appleid.apple.com',
+                    audience: bundleId,
+                    algorithms: ['ES256'], // Apple uses ES256 for identity tokens
+                });
+                // If verification succeeds for this bundleId, return success
+                return handleSuccessfulVerification(payload);
+            } catch (error) {
+                // Check if the error is specifically an audience claim validation failure
+                if (error instanceof joseErrors.JWTClaimValidationFailed && error.message.includes('"aud" claim validation failed')) {
+                    log.debug(`Audience claim failed for bundleId ${bundleId}, trying next...`);
+                    continue; // Try the next bundle ID
+                } else {
+                    // If it's another error (expired, bad signature, etc.), stop and throw it
+                    throw error;
                 }
             }
-            // If we get here, no bundle IDs worked
-            throw primaryError; // Throw the original error
         }
+
+        // If the loop finishes without success, it means all bundle IDs failed the audience check
+        log.error(`Apple Identity Token JWS verification failed: Audience claim mismatch for all configured bundle IDs.`, { configuredBundleIds: validBundleIds });
+        return { isValid: false, error: 'Token audience does not match any configured bundle ID.' };
+
     } catch (error) {
         const errorMessage = formatError(error);
         // Log specific jose errors if available
-        if (error instanceof Error) {
-            if (error.name === 'JWSSignatureVerificationFailed') {
-                log.error(`Apple Identity Token JWS verification failed: Invalid Signature`, { error: errorMessage });
-            } else if (error.name === 'JWKSetNoMatchingKey') {
-                log.error(`Apple Identity Token JWS verification failed: No matching key found in JWKSet`, { error: errorMessage });
-            } else if (error.name === 'JWTExpired') {
-                log.error(`Apple Identity Token JWS verification failed: Token expired`, { error: errorMessage });
-            } else if (error.name === 'JWTClaimValidationFailed') {
-                log.error(`Apple Identity Token JWS verification failed: Claim validation failed`, { claims: error.message, error: errorMessage }); // Add specific claim error message
-            } else {
-                log.error(`Apple Identity Token JWS verification failed`, { error: errorMessage });
-            }
+        if (error instanceof joseErrors.JWSSignatureVerificationFailed) {
+            log.error(`Apple Identity Token JWS verification failed: Invalid Signature`, { error: errorMessage });
+        } else if (error instanceof joseErrors.JWKSNoMatchingKey) {
+            log.error(`Apple Identity Token JWS verification failed: No matching key found in JWKSet`, { error: errorMessage });
+        } else if (error instanceof joseErrors.JWTExpired) {
+            log.error(`Apple Identity Token JWS verification failed: Token expired`, { error: errorMessage });
+        } else if (error instanceof joseErrors.JWTClaimValidationFailed) {
+            // This case might be less likely now due to the loop handling audience errors
+            log.error(`Apple Identity Token JWS verification failed: Claim validation failed`, { claims: (error as joseErrors.JWTClaimValidationFailed).message, error: errorMessage });
         } else {
             log.error(`Apple Identity Token JWS verification failed`, { error: errorMessage });
         }
@@ -180,6 +178,8 @@ export const verifyAppleSignedData = async (signedData: string): Promise<Notific
             // Let's assume it might not always be 'https://appleid.apple.com' for transaction/renewal info.
             // If it *is* always Apple, add: issuer: 'https://appleid.apple.com'
             // Audience is typically not present/relevant for transaction/renewal info JWS.
+            // Apple uses ES256 for these signed data payloads as well.
+             algorithms: ['ES256'],
         });
 
         // Cast payload to our expected interface AFTER successful verification
@@ -188,8 +188,8 @@ export const verifyAppleSignedData = async (signedData: string): Promise<Notific
         // --- Additional Payload Validations for App Store Data ---
 
         // 1. Check Bundle ID
-        if (verifiedPayload.bundleId !== config.appleBundleId) {
-             throw new Error(`Payload bundleId (${verifiedPayload.bundleId}) does not match expected (${config.appleBundleId})`);
+        if (!config.validAppleBundleIds.includes(verifiedPayload.bundleId) && verifiedPayload.bundleId !== config.appleBundleId) {
+             throw new Error(`Payload bundleId (${verifiedPayload.bundleId}) does not match any expected bundle IDs`);
         }
 
         // 2. Check Environment
@@ -216,4 +216,4 @@ export const verifyAppleSignedData = async (signedData: string): Promise<Notific
         log.error(`Apple App Store signed data JWS verification failed`, { error: errorMessage });
         return { isValid: false, error: errorMessage };
     }
-}; 
+};
