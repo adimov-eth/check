@@ -1,5 +1,6 @@
 import { getUserId, requireAuth } from '@/middleware/auth';
 import { AuthenticationError, NotFoundError } from '@/middleware/error';
+import { createSessionToken } from '@/services/session-service';
 import { getUserUsageStats } from '@/services/usage-service';
 import { authenticateWithApple, getUser, upsertUser } from '@/services/user-service';
 import type { AuthenticatedRequest } from '@/types/common';
@@ -90,58 +91,64 @@ const getCurrentUser = async (
  */
 const appleAuth = async (
   req: Request,
-  res: Response
+  res: Response,
+  next: NextFunction
 ) => {
   const { identityToken, fullName } = req.body;
-  
+
   if (!identityToken) {
     return res.status(400).json({
       success: false,
       error: 'Identity token is required'
     });
   }
-  
-  // Format name if provided
+
   let formattedName;
-  if (fullName?.givenName && fullName?.familyName) {
-    formattedName = `${fullName.givenName} ${fullName.familyName}`;
+  if (fullName?.givenName || fullName?.familyName) {
+    formattedName = `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim();
   }
-  
+
   try {
     const authResult = await authenticateWithApple(identityToken, formattedName);
-    
+
     if (!authResult.success) {
+      if (authResult.code === 'EMAIL_ALREADY_EXISTS') {
+        return res.status(409).json({
+          success: false,
+          error: authResult.error.message,
+          code: authResult.code,
+        });
+      }
       return res.status(401).json({
         success: false,
         error: authResult.error.message
       });
     }
-    
-    // Get user's usage stats after successful authentication
-    const usageStats = await getUserUsageStats(authResult.data.id);
-    
-    log.info(`User authenticated successfully with Apple`, { userId: authResult.data.id });
+
+    const user = authResult.data;
+
+    const sessionTokenResult = createSessionToken(user.id);
+    if (!sessionTokenResult.success) {
+      throw new Error('Failed to create session token after authentication.');
+    }
+    const sessionToken = sessionTokenResult.data;
+
+    log.info(`User authenticated successfully with Apple, session created`, { userId: user.id });
+
     res.status(200).json({
       success: true,
       data: {
         user: {
-          ...authResult.data,
-          usage: {
-            currentUsage: usageStats.currentUsage,
-            limit: usageStats.limit,
-            isSubscribed: usageStats.isSubscribed,
-            remainingConversations: usageStats.remainingConversations,
-            resetDate: usageStats.resetDate
-          }
-        }
-      }
+          id: user.id,
+          email: user.email,
+          name: user.name,
+        },
+        sessionToken: sessionToken,
+      },
     });
   } catch (error) {
     log.error(`Error in Apple authentication endpoint`, { error: formatError(error) });
-    res.status(500).json({
-      success: false,
-      error: 'Authentication failed'
-    });
+    next(error);
   }
 };
 

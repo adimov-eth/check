@@ -1,5 +1,3 @@
-// server/src/services/user-service.ts
-
 import type { Result } from '@/types/common';
 import { verifyAppleToken } from '@/utils/apple-auth';
 import { formatError } from '@/utils/error-formatter';
@@ -157,13 +155,15 @@ const _findOrCreateAppleUser = async (
 /**
  * Authenticate with Apple ID token
  * @param identityToken The ID token from Apple Sign In
- * @param name Optional user name provided by Apple (only on first sign-in)
+ * @param requestEmail Email provided from the client request body (fallback)
+ * @param name Optional user name provided by Apple (only on first sign-in) or from request
  * @returns Result object with user data if authentication is successful
  */
 export const authenticateWithApple = async (
   identityToken: string,
+  requestEmail?: string | null, // Added parameter
   name?: string
-): Promise<Result<User>> => {
+): Promise<Result<User, Error>> => { // Specify Error type for clarity
   try {
     // 1. Verify Apple token
     const verificationResult = await verifyAppleToken(identityToken);
@@ -172,37 +172,41 @@ export const authenticateWithApple = async (
       return { success: false, error: verificationResult.error };
     }
 
-    const { userId: appleSub, email } = verificationResult.data;
+    const { userId: appleSub, email: tokenEmail } = verificationResult.data;
     const appleId = `apple:${appleSub}`; // Consistent internal ID format
 
-    // 2. Ensure email exists
-    if (!email) {
-      log.error(`Apple authentication failed: No email provided in token`, { appleSub });
+    // ---> 2. Determine Email to Use <---
+    // Prioritize email from the verified token if available, otherwise use the one from the request body.
+    const emailToUse = tokenEmail || requestEmail;
+
+    if (!emailToUse) {
+      log.error(`Apple authentication failed: No email provided in token or request`, { appleSub });
       return {
         success: false,
         error: new Error('Authentication requires an email address')
       };
     }
+    // ---> Email Determined <---
 
     // 3. Check for email conflict with a *different* user ID
     const existingUserWithEmail = await queryOne<User>(
       'SELECT * FROM users WHERE email = ? AND id != ?',
-      [email, appleId] // Check for email conflict with other users
+      [emailToUse, appleId] // Check for email conflict with other users
     );
 
     if (existingUserWithEmail) {
       // Email is already associated with a different user account.
-      log.warn(`Email already exists. Apple ID cannot be linked`, { email, appleId, existingUserId: existingUserWithEmail.id });
+      log.warn(`Email already exists. Apple ID cannot be linked`, { email: emailToUse, appleId, existingUserId: existingUserWithEmail.id });
       return {
         success: false,
-        error: new Error(`Email ${email} is already associated with another account. Please sign in with that account and link Apple Sign-In in profile settings.`),
+        error: new Error(`Email ${emailToUse} is already associated with another account. Please sign in with that account or use a different email.`),
         code: 'EMAIL_ALREADY_EXISTS' // Specific code for client handling
       };
     }
 
     // 4. Find (or create) the user associated with this Apple ID
     // The helper function handles upsert and retrieval
-    const user = await _findOrCreateAppleUser(appleId, email, name);
+    const user = await _findOrCreateAppleUser(appleId, emailToUse, name);
 
     log.info(`User authenticated with Apple`, { userId: user.id });
     return { success: true, data: user };

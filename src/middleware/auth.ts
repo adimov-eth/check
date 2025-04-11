@@ -1,21 +1,8 @@
 import { AuthenticationError, NotFoundError } from '@/middleware/error';
+import { verifySessionToken } from '@/services/session-service';
 import type { AuthenticatedRequest, Middleware } from '@/types/common';
-import { verifyAppleToken } from '@/utils/apple-auth';
 import { formatError } from '@/utils/error-formatter';
 import { log } from '@/utils/logger';
-import jwt from 'jsonwebtoken';
-
-/** 
- * Decoded Apple token payload interface
- */
-interface DecodedAppleToken {
-  sub: string; // Apple's unique user ID
-  email?: string;
-  email_verified?: boolean;
-  is_private_email?: boolean;
-  // Name might not be present in the token itself after first login
-  // It's only included in the first sign-in response
-}
 
 /**
  * Extract token from Authorization header
@@ -27,7 +14,7 @@ const extractToken = (req: AuthenticatedRequest): string | null => {
 };
 
 /**
- * Middleware for Apple authentication
+ * Middleware for Session Token authentication
  */
 export const requireAuth: Middleware = async (req, res, next) => {
   try {
@@ -36,35 +23,26 @@ export const requireAuth: Middleware = async (req, res, next) => {
       return next(new AuthenticationError('Unauthorized: No token provided'));
     }
 
-    // Verify the token signature and basic claims with Apple
-    const result = await verifyAppleToken(token);
+    // Verify the session token
+    const result = verifySessionToken(token);
     if (!result.success) {
-      return next(new AuthenticationError(`Unauthorized: ${result.error.message}`));
+      // Pass the specific AuthenticationError from verifySessionToken
+      return next(result.error);
     }
 
-    // Attach user info to request
+    // Attach user info from the session payload to the request
     const authReq = req as AuthenticatedRequest;
-    authReq.userId = `apple:${result.data.userId}`;
-    authReq.email = result.data.email; // Email from verified token
+    authReq.userId = result.data.userId;
+    // If you add email/name to JWT payload, extract them here:
+    // authReq.email = result.data.email;
+    // authReq.fullName = result.data.fullName;
 
-    // Attempt to decode the token to get additional fields
-    // This is less critical as the primary source should be the DB
-    // Apple often only includes name/email in the *first* token
-    try {
-      const decodedPayload = jwt.decode(token) as DecodedAppleToken | null;
-      if (decodedPayload?.email && !authReq.email) {
-        // Fallback if verifyAppleToken didn't return it but decode did
-        authReq.email = decodedPayload.email;
-      }
-    } catch (decodeError) {
-      log.warn(`Could not decode token payload after verification`, { error: formatError(decodeError) });
-      // Continue since token was already verified
-    }
-
+    log.debug(`Session token validated for user`, { userId: authReq.userId });
     next();
   } catch (error) {
+    // Catch unexpected errors during middleware execution
     log.error(`Error in requireAuth middleware`, { error: formatError(error) });
-    next(new AuthenticationError('Unauthorized: Invalid token'));
+    next(new AuthenticationError('Unauthorized: Error processing token'));
   }
 };
 
