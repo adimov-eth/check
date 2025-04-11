@@ -103,6 +103,7 @@ export const verifyAppleIdentityTokenJws = async (identityToken: string): Promis
             const { payload } = await jwtVerify(identityToken, jwkSet, {
                 issuer: 'https://appleid.apple.com',
                 audience: config.appleBundleId,
+                algorithms: ['ES256'],
             });
             return handleSuccessfulVerification(payload);
         } catch (primaryError) {
@@ -113,6 +114,7 @@ export const verifyAppleIdentityTokenJws = async (identityToken: string): Promis
                     const { payload } = await jwtVerify(identityToken, jwkSet, {
                         issuer: 'https://appleid.apple.com',
                         audience: bundleId,
+                        algorithms: ['ES256'],
                     });
                     return handleSuccessfulVerification(payload);
                 } catch {
