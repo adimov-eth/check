@@ -131,9 +131,11 @@ const appleAuth = async (
 
     const user = authResult.data;
 
-    const sessionTokenResult = createSessionToken(user.id);
+    const sessionTokenResult = await createSessionToken(user.id);
     if (!sessionTokenResult.success) {
-      throw new Error('Failed to create session token after authentication.');
+      // Access the error property for logging or more specific handling
+      const errorMsg = sessionTokenResult.error?.message || 'Failed to create session token after authentication.';
+      throw new Error(errorMsg);
     }
     const sessionToken = sessionTokenResult.data;
 
