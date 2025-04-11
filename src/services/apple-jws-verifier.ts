@@ -106,7 +106,6 @@ export const verifyAppleIdentityTokenJws = async (identityToken: string): Promis
                 const { payload } = await jwtVerify(identityToken, jwkSet, {
                     issuer: 'https://appleid.apple.com',
                     audience: bundleId,
-                    algorithms: ['ES256'], // Apple uses ES256 for identity tokens
                 });
                 // If verification succeeds for this bundleId, return success
                 return handleSuccessfulVerification(payload);
