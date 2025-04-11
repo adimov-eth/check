@@ -19,7 +19,7 @@ const _checkConversationCompletionAndQueueGpt = async (
   try {
     log.debug(`Checking transcription status`, { conversationId });
     const [conversation, audios] = await Promise.all([
-      getConversationById(conversationId, userId),
+      getConversationById(conversationId),
       getConversationAudios(conversationId)
     ]);
 

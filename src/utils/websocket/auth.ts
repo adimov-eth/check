@@ -1,6 +1,7 @@
+// /Users/adimov/Developer/final/check/src/utils/websocket/auth.ts
+import { verifySessionToken } from '@/services/session-service'; // <-- Import correct verifier
 import type { Result } from '@/types/common';
-import { verifyAppleToken } from '../apple-auth';
-import { cacheAppleAuthResult, getCachedAppleAuth } from '../apple-auth-cache';
+// Removed apple-auth-cache imports as they are not relevant for session tokens here
 import { log } from '../logger';
 import { addClientToUser, getClientsByUserId, getWss, type WebSocketClient } from './state';
 
@@ -28,37 +29,21 @@ function isAuthMessage(data: unknown): data is AuthMessage {
     );
 }
 
+// --- MODIFIED: Use verifySessionToken ---
 async function performAuthentication(token: string, clientIp: string): Promise<Result<{ userId: string }, Error>> {
-    let result: Result<{ userId: string }, Error> | undefined;
+    log.debug(`Verifying session token for client (IP: ${clientIp})`);
+    // Directly use the session token verifier
+    const verificationResult = await verifySessionToken(token);
 
-    // 1. Check cache
-    const cachedResult = await getCachedAppleAuth(token);
-    if (cachedResult) {
-        log.debug(`Using cached auth for client (IP: ${clientIp})`);
-        result = cachedResult;
+    if (verificationResult.success) {
+        // The userId from verifySessionToken should already be in the correct internal format
+        return { success: true, data: { userId: verificationResult.data.userId } };
     } else {
-        // 2. Verify with Apple if not cached
-        log.debug(`Verifying token with Apple for client (IP: ${clientIp})`);
-        const verificationResult = await verifyAppleToken(token);
-        await cacheAppleAuthResult(token, verificationResult); // Cache the raw result
-        result = verificationResult;
-    }
-
-    // 3. Ensure prefix is added before returning, regardless of source
-    if (result?.success) {
-        // Ensure the userId has the prefix
-        const rawUserId = result.data.userId;
-        const prefixedUserId = rawUserId.startsWith('apple:') ? rawUserId : `apple:${rawUserId}`;
-        return { success: true, data: { userId: prefixedUserId } };
-    } else if (result) {
-        // Return failure result as is
-        return result;
-    } else {
-        // Should not happen if cache/verify always return a result, but handle defensively
-        log.error('performAuthentication failed to get a result from cache or verification');
-        return { success: false, error: new Error('Authentication process failed internally') };
+        // Return the failure result (which should be an AuthenticationError)
+        return verificationResult;
     }
 }
+// --- END MODIFICATION ---
 
 export async function handleAuthMessage(
     ws: WebSocketClient,
