@@ -1,3 +1,4 @@
+// /Users/adimov/Developer/final/check/src/utils/websocket/messaging.ts
 import { redisClient } from '@/config';
 import type { WebSocketMessage } from '@/types/websocket';
 import { WebSocket } from 'ws';
@@ -70,13 +71,15 @@ export async function sendBufferedMessages(ws: WebSocketClient, topic: string): 
                 log.warn(`[sendBufferedMessages] Client ${ws.userId} readyState is ${ws.readyState} while sending buffered messages. Skipping message type ${msgData.type}.`);
                 if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
                     log.warn(`[sendBufferedMessages] Client ${ws.userId} connection closed while sending buffered messages. Stopping delivery for this client.`);
-                    break;
+                    break; // Stop trying to send to this closed client
                 }
             }
         }
 
-        if (messagesToSend.length > 0 || expiredCount > 0 || parseErrorCount > 0) {
-            log.info(`[sendBufferedMessages] Attempting to clear Redis buffer ${key} (Sent: ${sentCount}, Expired: ${expiredCount}, Parse Errors: ${parseErrorCount})`);
+        // --- MODIFICATION: Clear buffer ONLY if messages were successfully sent ---
+        // This prevents clearing the buffer if the client disconnected mid-send.
+        if (sentCount > 0 && sentCount === messagesToSend.length) { // Clear only if ALL intended messages were sent
+            log.info(`[sendBufferedMessages] Attempting to clear Redis buffer ${key} after sending ${sentCount} messages.`);
             try {
                 log.debug(`[sendBufferedMessages] Executing redisClient.del(${key})`);
                 await redisClient.del(key);
@@ -84,9 +87,19 @@ export async function sendBufferedMessages(ws: WebSocketClient, topic: string): 
             } catch (delError) {
                 log.error(`[sendBufferedMessages] Failed to clear Redis buffer ${key}: ${delError}`);
             }
-        } else {
-            log.info(`[sendBufferedMessages] No messages processed, expired, or failed parsing for ${key}. Buffer not cleared.`);
+        } else if (messagesToSend.length > 0) {
+            log.warn(`[sendBufferedMessages] Not all messages successfully sent for ${key} (Sent: ${sentCount}/${messagesToSend.length}), buffer not cleared.`);
+        } else if (expiredCount > 0 || parseErrorCount > 0) {
+            // If only expired/error messages were found, clear the buffer
+            log.info(`[sendBufferedMessages] Clearing Redis buffer ${key} containing only expired/invalid messages.`);
+             try {
+                await redisClient.del(key);
+                log.info(`[sendBufferedMessages] Successfully cleared Redis buffer ${key}.`);
+            } catch (delError) {
+                log.error(`[sendBufferedMessages] Failed to clear Redis buffer ${key}: ${delError}`);
+            }
         }
+        // --- END MODIFICATION ---
 
         log.info(`[sendBufferedMessages] Delivery report for ${key}: Sent: ${sentCount}, Skipped(Closed/Error): ${skippedCount}, Expired: ${expiredCount}, Parse Errors: ${parseErrorCount}, Total Raw: ${messages.length}`);
 
@@ -94,6 +107,7 @@ export async function sendBufferedMessages(ws: WebSocketClient, topic: string): 
         log.error(`[sendBufferedMessages] Redis error fetching/processing buffered messages for ${key}: ${redisError}`);
     }
 }
+
 
 export async function bufferMessage(userId: string, topic: string, data: WebSocketMessage): Promise<void> {
     const messageData = {
@@ -148,10 +162,10 @@ export function sendToSubscribedClients(userId: string, topic: string, data: Web
     const userClients = getClientsByUserId().get(userId);
     log.debug(`Attempting to send message to topic ${topic} for user ${userId}`);
 
+    let shouldBuffer = false;
     if (!userClients || userClients.size === 0) {
         log.warn(`No connected clients found for user ${userId}. Buffering message for topic ${topic}.`);
-        bufferMessage(userId, topic, data);
-        return;
+        shouldBuffer = true;
     }
 
     const message = JSON.stringify(data);
@@ -161,40 +175,53 @@ export function sendToSubscribedClients(userId: string, topic: string, data: Web
     let notAuthCount = 0;
     let errorCount = 0;
 
-    userClients.forEach((client) => {
-        if (!client.userId || client.userId !== userId || client.isAuthenticating) {
-            notAuthCount++;
-            return;
-        }
+    if (userClients) { // Only iterate if clients exist
+        userClients.forEach((client) => {
+            if (!client.userId || client.userId !== userId || client.isAuthenticating) {
+                notAuthCount++;
+                return;
+            }
 
-        if (client.readyState === WebSocket.OPEN) {
-            if (client.subscribedTopics.has(topic)) {
-                try {
-                    client.send(message);
-                    sentCount++;
-                    log.debug(`Message sent to client ${client.userId} subscribed to ${topic}`);
-                } catch (error) {
-                    log.error(`Error sending message to client ${client.userId} for topic ${topic}: ${error}`);
-                    errorCount++;
-                    // Optionally terminate client on send error
-                    // client.terminate();
+            if (client.readyState === WebSocket.OPEN) {
+                if (client.subscribedTopics.has(topic)) {
+                    try {
+                        client.send(message);
+                        sentCount++;
+                        log.debug(`Message sent to client ${client.userId} subscribed to ${topic}`);
+                    } catch (error) {
+                        log.error(`Error sending message to client ${client.userId} for topic ${topic}: ${error}`);
+                        errorCount++;
+                        // Optionally terminate client on send error
+                        // client.terminate();
+                    }
+                } else {
+                    notSubscribedCount++;
+                    log.debug(`Client ${client.userId} is connected but not subscribed to ${topic}.`);
                 }
             } else {
-                notSubscribedCount++;
+                closedCount++;
             }
-        } else {
-            closedCount++;
-        }
-    });
+        });
+    }
 
-    // Buffer only if no clients successfully received the message AND there were clients for the user
-    if (sentCount === 0 && userClients.size > 0) {
-        log.warn(`Message for topic ${topic} not sent to any active, subscribed, open clients for user ${userId}. Buffering.`);
+    // --- MODIFICATION: Refined buffering condition ---
+    // Buffer if no clients successfully received the message AND there were clients for the user OR if there were no clients at all.
+    if (sentCount === 0 && (userClients && userClients.size > 0 || !userClients)) {
+        // Log why buffering is happening
+        if (userClients && userClients.size > 0) {
+            log.warn(`Message for topic ${topic} not sent to any active, subscribed, open clients for user ${userId}. Buffering.`);
+        } // Logging for no clients is handled above
+        shouldBuffer = true;
+    }
+    // --- END MODIFICATION ---
+
+    if (shouldBuffer) {
         bufferMessage(userId, topic, data);
     }
 
-    log.debug(`Message delivery report for user ${userId}, topic ${topic}: sent=${sentCount}, not_subscribed=${notSubscribedCount}, closed=${closedCount}, not_auth=${notAuthCount}, errors=${errorCount}, total_clients=${userClients.size}`);
+    log.debug(`Message delivery report for user ${userId}, topic ${topic}: sent=${sentCount}, not_subscribed=${notSubscribedCount}, closed=${closedCount}, not_auth=${notAuthCount}, errors=${errorCount}, total_clients=${userClients?.size ?? 0}, buffered=${shouldBuffer}`);
 }
+
 
 export function broadcast(data: WebSocketMessage): void {
     const wss = getWss();
