@@ -17,60 +17,7 @@ export const createAudioRecord = async ({
 }): Promise<Audio> => {
 	return await transaction(async () => {
 		try {
-			const conversationExistsResult = await query<{ exists_flag: number }>(
-				`SELECT 1 as exists_flag
-         FROM conversations
-         WHERE id = ? AND userId = ?
-         LIMIT 1`,
-				[conversationId, userId],
-			);
-
-			const conversationExists = conversationExistsResult[0]?.exists_flag === 1;
-
-			if (!conversationExists) {
-				throw new Error(
-					`Conversation ${conversationId} not found or does not belong to user ${userId}`,
-				);
-			}
-
-			const existingAudios = await query<{
-				count: number;
-				recordingType: string;
-				existingKey: number;
-			}>(
-				`SELECT
-           COUNT(*) as count,
-           c.recordingType,
-           MAX(CASE WHEN a.audioKey = ? THEN 1 ELSE 0 END) as existingKey
-         FROM conversations c
-         LEFT JOIN audios a ON c.id = a.conversationId
-         WHERE c.id = ?
-         GROUP BY c.id`,
-				[audioKey, conversationId],
-			);
-
-			const result = existingAudios[0];
-			if (!result) {
-				throw new Error(
-					`Could not retrieve conversation details for limit check: ${conversationId}`,
-				);
-			}
-
-			const { count: audioCount, recordingType, existingKey } = result;
-
-			if (existingKey === 1) {
-				throw new ValidationError(
-					`Audio with key "${audioKey}" already exists for conversation ${conversationId}`,
-				);
-			}
-
-			const maxAudios = recordingType === "separate" ? 2 : 1;
-			if (audioCount >= maxAudios) {
-				throw new ValidationError(
-					`Maximum number of audios (${maxAudios}) reached for ${recordingType} conversation ${conversationId}`,
-				);
-			}
-
+			// Directly attempt to insert the audio record
 			const createdAudios = await query<Audio>(
 				`INSERT INTO audios (conversationId, userId, audioFile, audioKey, status, createdAt, updatedAt)
          VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
@@ -81,6 +28,13 @@ export const createAudioRecord = async ({
 			const audio = createdAudios[0];
 
 			if (!audio || !audio.id) {
+				// This error might indicate a constraint violation that wasn't caught earlier (e.g., DB constraint)
+				// or a different insertion issue.
+				log.error("Failed to create audio record or retrieve ID after insert", {
+					conversationId,
+					userId,
+					audioKey,
+				});
 				throw new Error("Failed to create audio record or retrieve ID");
 			}
 
@@ -91,11 +45,13 @@ export const createAudioRecord = async ({
 			});
 			return audio;
 		} catch (error) {
-			log.error("Error creating audio record", {
+			// Log any error during the transaction (e.g., DB constraint violation, connection issue)
+			log.error("Error during createAudioRecord transaction", {
 				conversationId,
 				audioKey,
 				error: formatError(error),
 			});
+			// Re-throw the caught error to ensure transaction rollback and proper handling upstream
 			throw error;
 		}
 	});
