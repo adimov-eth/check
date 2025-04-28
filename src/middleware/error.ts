@@ -18,8 +18,8 @@ export class AppError extends Error {
   constructor(
     message: string, 
     code: ErrorCode = ErrorCode.SERVER_ERROR,
-    statusCode: number = 500,
-    isOperational: boolean = true
+    statusCode = 500,
+    isOperational = true
   ) {
     super(message);
     this.name = this.constructor.name;
@@ -105,7 +105,7 @@ export const handleError = (
   // _next: NextFunction
 ): Response => {
   // Log all errors
-  log.error(`Error handled`, { 
+  log.error("Error handled", { 
     message: err.message, 
     name: err.name, 
     stack: (config.nodeEnv !== 'production' ? err.stack : undefined) // Only include stack in non-prod

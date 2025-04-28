@@ -24,12 +24,12 @@ app.use(cors({
 
 // Request logger
 app.use((req, res, next) => {
-  log.debug(`Request received`, { method: req.method, path: req.path });
+  log.debug("Request received", { method: req.method, path: req.path });
   const start = Date.now();
 
   res.on('finish', () => {
     const duration = Date.now() - start;
-    log.debug(`Request finished`, { method: req.method, path: req.path, status: res.statusCode, durationMs: duration });
+    log.debug("Request finished", { method: req.method, path: req.path, status: res.statusCode, durationMs: duration });
   });
 
   next();

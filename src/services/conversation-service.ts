@@ -35,7 +35,7 @@ export const createConversation = async ({
 
       if (!userExists) {
         // This shouldn't happen with proper middleware
-        log.error(`User not found in database but passed auth middleware`, { userId });
+        log.error("User not found in database but passed auth middleware", { userId });
         throw new Error(`User not found: ${userId}`);
       }
 
@@ -46,7 +46,7 @@ export const createConversation = async ({
         // Note: gptResponse and errorMessage default to NULL in the DB schema presumably
       );
 
-      log.info(`Created conversation`, { conversationId: id, userId });
+      log.info("Created conversation", { conversationId: id, userId });
 
       // Ensure the returned object matches the Conversation type
       return {
@@ -63,7 +63,7 @@ export const createConversation = async ({
         // --- End Fix ---
       };
     } catch (error) {
-      log.error(`Failed to create conversation`, { error: formatError(error) });
+      log.error("Failed to create conversation", { error: formatError(error) });
       throw error;
     }
   });
@@ -75,7 +75,7 @@ export const createConversation = async ({
 export const getConversationById = async (conversationId: string): Promise<Conversation | null> => {
   try {
     const conversations = await query<Conversation>(
-      `SELECT * FROM conversations WHERE id = ?`,
+      "SELECT * FROM conversations WHERE id = ?",
       [conversationId]
     );
     // Ensure DB NULL values are mapped to undefined if necessary by the query function or here
@@ -87,7 +87,7 @@ export const getConversationById = async (conversationId: string): Promise<Conve
     }
     return result;
   } catch (error) {
-    log.error(`Error fetching conversation by ID`, { conversationId, error: formatError(error) });
+    log.error("Error fetching conversation by ID", { conversationId, error: formatError(error) });
     throw error;
   }
 };
@@ -98,7 +98,7 @@ export const getConversationById = async (conversationId: string): Promise<Conve
 export const getUserConversations = async (userId: string): Promise<Conversation[]> => {
   try {
     const conversations = await query<Conversation>(
-      `SELECT * FROM conversations WHERE userId = ? ORDER BY createdAt DESC`,
+      "SELECT * FROM conversations WHERE userId = ? ORDER BY createdAt DESC",
       [userId]
     );
     // Ensure DB NULL values are mapped to undefined if necessary
@@ -108,7 +108,7 @@ export const getUserConversations = async (userId: string): Promise<Conversation
         errorMessage: conv.errorMessage ?? undefined,
     }));
   } catch (error) {
-    log.error(`Error fetching user conversations`, { userId, error: formatError(error) });
+    log.error("Error fetching user conversations", { userId, error: formatError(error) });
     throw error;
   }
 };
@@ -147,9 +147,9 @@ export const updateConversationStatus = async (
       params
     );
 
-    log.info(`Updated conversation status`, { conversationId, status });
+    log.info("Updated conversation status", { conversationId, status });
   } catch (error) {
-    log.error(`Error updating conversation status`, { conversationId, status, error: formatError(error) });
+    log.error("Error updating conversation status", { conversationId, status, error: formatError(error) });
     throw error;
   }
 };

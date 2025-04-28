@@ -44,7 +44,7 @@ export const requireAuth = async (
     // authReq.email = payload.email; // If email is in session payload
     // authReq.fullName = ... // If name is in session payload
 
-    log.debug(`Session token validated for user`, { userId: payload.userId });
+    log.debug("Session token validated for user", { userId: payload.userId });
     next(); // Proceed to the next middleware or route handler
   } catch (error) {
     // Catch unexpected errors during verification

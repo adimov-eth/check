@@ -117,7 +117,7 @@ router.post(
       }
     );
 
-    log.debug(`Created audio record and queued for processing`, { audioId: audio.id, conversationId, audioKey });
+    log.debug("Created audio record and queued for processing", { audioId: audio.id, conversationId, audioKey });
     res.status(201).json({
         success: true,
         message: "Audio uploaded and queued for processing.",
@@ -136,7 +136,7 @@ router.get(
         const { resource, userId } = req as AuthenticatedRequest;
         const audio = resource as Audio;
 
-        log.debug(`Retrieved audio`, { audioId: audio.id, userId });
+        log.debug("Retrieved audio", { audioId: audio.id, userId });
         res.json({ audio }); // Return the full audio object
     })
 );
@@ -152,7 +152,7 @@ router.get(
         const { conversationId } = req.params;
 
         const audios = await getConversationAudios(conversationId);
-        log.debug(`Retrieved audios for conversation`, { count: audios.length, conversationId, userId });
+        log.debug("Retrieved audios for conversation", { count: audios.length, conversationId, userId });
         res.json({ audios }); // Return the list of audio objects
     })
 );
@@ -176,7 +176,7 @@ router.patch(
         const { status } = validationResult.data;
 
         await updateAudioStatus(audio.id as number, status);
-        log.debug(`Updated audio status`, { audioId: audio.id, status, userId });
+        log.debug("Updated audio status", { audioId: audio.id, status, userId });
         res.json({ success: true });
     })
 );

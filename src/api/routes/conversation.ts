@@ -60,7 +60,7 @@ const createNewConversation: RequestHandler = async (req, res) => {
     recordingType,
   });
 
-  log.debug(`Created new conversation`, { conversationId: conversation.id, userId });
+  log.debug("Created new conversation", { conversationId: conversation.id, userId });
   // --- FIX: Remove return ---
   res.status(201).json({
     success: true,
@@ -81,7 +81,7 @@ const getConversation: RequestHandler = async (req, res) => {
   const { resource, userId } = req as AuthenticatedRequest;
   const conversation = resource as Conversation;
 
-  log.debug(`Retrieved conversation`, { conversationId: req.params.id, userId });
+  log.debug("Retrieved conversation", { conversationId: req.params.id, userId });
   // --- FIX: Remove return ---
   res.status(200).json({ conversation });
   // --- End Fix ---
@@ -94,7 +94,7 @@ const getAllConversations: RequestHandler = async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
 
   const conversations = await getUserConversations(userId);
-  log.debug(`Retrieved conversations`, { count: conversations.length, userId });
+  log.debug("Retrieved conversations", { count: conversations.length, userId });
   // --- FIX: Remove return ---
   res.status(200).json({ conversations });
   // --- End Fix ---
@@ -115,7 +115,7 @@ const processConversation: RequestHandler = async (req, res) => {
   await updateConversationStatus(conversationId, 'processing');
   await gptQueue.add('process-conversation', { conversationId, userId });
 
-  log.debug(`Started processing conversation`, { conversationId, userId });
+  log.debug("Started processing conversation", { conversationId, userId });
   // --- FIX: Remove return ---
   res.status(202).json({
     message: 'Processing started',

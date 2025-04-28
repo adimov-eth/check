@@ -14,13 +14,13 @@ export const countUserConversationsThisWeek = async (userId: string): Promise<nu
     
     // First check if the user exists
     const userResult = await query<{ user_exists: number }>(
-      `SELECT 1 as user_exists FROM users WHERE id = ? LIMIT 1`,
+      "SELECT 1 as user_exists FROM users WHERE id = ? LIMIT 1",
       [userId]
     );
     
     // If user doesn't exist in our database, they have 0 conversations
     if (!userResult[0] || !userResult[0].user_exists) {
-      log.warn(`Attempted to count conversations for non-existent user`, { userId });
+      log.warn("Attempted to count conversations for non-existent user", { userId });
       return 0;
     }
     
@@ -33,7 +33,7 @@ export const countUserConversationsThisWeek = async (userId: string): Promise<nu
     
     return result[0]?.count || 0;
   } catch (error) {
-    log.error(`Error counting user conversations`, { userId, error: formatError(error) });
+    log.error("Error counting user conversations", { userId, error: formatError(error) });
     // Fall back to 0 to prevent usage tracking errors from blocking user actions
     return 0;
   }
@@ -75,7 +75,7 @@ export const canCreateConversation = async (userId: string): Promise<{
       isSubscribed: false
     };
   } catch (error) {
-    log.error(`Error checking if user can create conversation`, { userId, error: formatError(error) });
+    log.error("Error checking if user can create conversation", { userId, error: formatError(error) });
     
     // Default to allowing creation if there's an error (business decision)
     return {
@@ -125,7 +125,7 @@ export const getUserUsageStats = async (userId: string): Promise<{
       resetDate: nextResetDate
     };
   } catch (error) {
-    log.error(`Error getting user usage stats`, { userId, error: formatError(error) });
+    log.error("Error getting user usage stats", { userId, error: formatError(error) });
     throw error;
   }
 };

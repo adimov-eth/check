@@ -29,14 +29,13 @@ export const verifyAppleToken = async (identityToken: string): Promise<Result<{ 
       const successResult = { success: true as const, data: { userId, email } };
       await cacheAppleAuthResult(identityToken, successResult);
       return successResult;
-    } else {
+    }
       // Cache the failure result
       const error = new Error(result.error || 'Apple token verification failed');
       log.error(`Error verifying Apple ID token: ${formatError(error)}`);
       const failureResult = { success: false as const, error };
       await cacheAppleAuthResult(identityToken, failureResult); // Cache failures too to prevent retries
       return failureResult;
-    }
 
   } catch (error) {
     log.error(`Error verifying Apple ID token: ${formatError(error)}`);

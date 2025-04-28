@@ -1,6 +1,6 @@
 import { ExternalServiceError } from '@/middleware/error';
 import type { Result } from '@/types/common';
-import { readFile } from 'fs/promises';
+import { readFile } from 'node:fs/promises';
 import OpenAI from 'openai';
 import { config } from '../config';
 import { formatError } from './error-formatter';

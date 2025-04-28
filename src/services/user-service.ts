@@ -15,7 +15,7 @@ export const getUser = async (id: string): Promise<User | null> => {
     const users = await query<User>('SELECT * FROM users WHERE id = ?', [id]);
     return users[0] ?? null;
   } catch (error) {
-    log.error(`Error fetching user`, { userId: id, error: formatError(error) });
+    log.error("Error fetching user", { userId: id, error: formatError(error) });
     throw error;
   }
 };
@@ -43,7 +43,7 @@ export const upsertUser = async ({
       );
 
       if (existingUsers[0]) {
-        log.warn(`Email already in use by another user`, { email, existingUserId: existingUsers[0].id, requestedUserId: id });
+        log.warn("Email already in use by another user", { email, existingUserId: existingUsers[0].id, requestedUserId: id });
         return {
           success: false,
           error: new Error(`Email ${email} is already in use by another user`)
@@ -59,10 +59,10 @@ export const upsertUser = async ({
           updatedAt = strftime('%s', 'now')
       `, [id, email, name ?? null]);
 
-      log.info(`User upserted successfully`, { userId: id });
+      log.info("User upserted successfully", { userId: id });
       return { success: true, data: undefined };
     } catch (error) {
-      log.error(`Error upserting user`, { userId: id, email, error: formatError(error) });
+      log.error("Error upserting user", { userId: id, email, error: formatError(error) });
       return { success: false, error: error instanceof Error ? error : new Error(String(error)) };
     }
   });
@@ -86,16 +86,16 @@ export const deleteUser = async (id: string): Promise<Result<void>> => {
 
       if (!userExists) {
         // User doesn't exist - no need to delete, just log and return
-        log.info(`Delete requested for user but user not found in database - skipping delete`, { userId: id });
+        log.info("Delete requested for user but user not found in database - skipping delete", { userId: id });
         return { success: true, data: undefined };
       }
 
       // Delete user and all related data will be cascaded due to foreign key constraints
       await run('DELETE FROM users WHERE id = ?', [id]);
-      log.info(`User deleted successfully`, { userId: id });
+      log.info("User deleted successfully", { userId: id });
       return { success: true, data: undefined };
     } catch (error) {
-      log.error(`Error deleting user`, { userId: id, error: formatError(error) });
+      log.error("Error deleting user", { userId: id, error: formatError(error) });
       return { success: false, error: error instanceof Error ? error : new Error(String(error)) };
     }
   });
@@ -112,11 +112,11 @@ export const sendWelcomeEmail = async (userId: string, email: string): Promise<R
   // In a real application, this would integrate with an email service
   // (e.g., SendGrid, Mailgun, AWS SES) to send a formatted welcome email.
   try {
-    log.info(`[Placeholder] Welcome email would be sent`, { userId, email });
+    log.info("[Placeholder] Welcome email would be sent", { userId, email });
     // Example: await emailService.send({ to: email, template: 'welcome', context: { userId } });
     return { success: true, data: undefined };
   } catch (error) {
-    log.error(`[Placeholder] Error queueing welcome email`, { userId, email, error: formatError(error) });
+    log.error("[Placeholder] Error queueing welcome email", { userId, email, error: formatError(error) });
     // If using a real service, return the actual error
     return { success: false, error: new Error('Failed to queue welcome email (Placeholder)') };
   }
@@ -168,7 +168,7 @@ export const authenticateWithApple = async (
     // 1. Verify Apple token
     const verificationResult = await verifyAppleToken(identityToken);
     if (!verificationResult.success) {
-      log.error(`Apple token verification failed`, { error: verificationResult.error.message });
+      log.error("Apple token verification failed", { error: verificationResult.error.message });
       return { success: false, error: verificationResult.error };
     }
 
@@ -180,7 +180,7 @@ export const authenticateWithApple = async (
     const emailToUse = tokenEmail || requestEmail;
 
     if (!emailToUse) {
-      log.error(`Apple authentication failed: No email provided in token or request`, { appleSub });
+      log.error("Apple authentication failed: No email provided in token or request", { appleSub });
       return {
         success: false,
         error: new Error('Authentication requires an email address')
@@ -196,7 +196,7 @@ export const authenticateWithApple = async (
 
     if (existingUserWithEmail) {
       // Email is already associated with a different user account.
-      log.warn(`Email already exists. Apple ID cannot be linked`, { email: emailToUse, appleId, existingUserId: existingUserWithEmail.id });
+      log.warn("Email already exists. Apple ID cannot be linked", { email: emailToUse, appleId, existingUserId: existingUserWithEmail.id });
       return {
         success: false,
         error: new Error(`Email ${emailToUse} is already associated with another account. Please sign in with that account or use a different email.`),
@@ -208,12 +208,12 @@ export const authenticateWithApple = async (
     // The helper function handles upsert and retrieval
     const user = await _findOrCreateAppleUser(appleId, emailToUse, name);
 
-    log.info(`User authenticated with Apple`, { userId: user.id });
+    log.info("User authenticated with Apple", { userId: user.id });
     return { success: true, data: user };
 
   } catch (error) {
     // Catch errors from token verification or user creation/retrieval
-    log.error(`Error in Apple authentication process`, { error: formatError(error) });
+    log.error("Error in Apple authentication process", { error: formatError(error) });
     return {
       success: false,
       error: error instanceof Error ? error : new Error(String(error))

@@ -90,11 +90,11 @@ export const verifySessionToken = async (token: string): Promise<Result<SessionP
     if (error instanceof Error) {
        if (error.name === 'JWTExpired') {
          return { success: false, error: new AuthenticationError('Token expired') };
-       } else if (error.name === 'JWSSignatureVerificationFailed' || error.name === 'JWSInvalid') {
+       }if (error.name === 'JWSSignatureVerificationFailed' || error.name === 'JWSInvalid') {
          return { success: false, error: new AuthenticationError('Invalid token signature') };
-       } else if (error.name === 'JWTClaimValidationFailed') {
+       }if (error.name === 'JWTClaimValidationFailed') {
          return { success: false, error: new AuthenticationError(`Token claim validation failed: ${error.message}`) };
-       } else if (error.message.includes('JWT_SECRET')) {
+       }if (error.message.includes('JWT_SECRET')) {
          // Catch the error from getSecretKey()
          return { success: false, error: new AuthenticationError('Server configuration error during token verification') };
        }

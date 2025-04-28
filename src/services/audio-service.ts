@@ -74,7 +74,7 @@ export const createAudioRecord = async ({
       log.info('Audio record created successfully', { audioId: audio.id, conversationId, userId });
       return audio;
     } catch (error) {
-      log.error(`Error creating audio record`, { conversationId, audioKey, error: formatError(error) });
+      log.error("Error creating audio record", { conversationId, audioKey, error: formatError(error) });
       throw error;
     }
   });
@@ -82,21 +82,21 @@ export const createAudioRecord = async ({
 
 export const getAudioById = async (audioIdStr: string): Promise<Audio | null> => {
   try {
-    const audioId = parseInt(audioIdStr, 10);
-    if (isNaN(audioId)) {
+    const audioId = Number.parseInt(audioIdStr, 10);
+    if (Number.isNaN(audioId)) {
       log.warn('Invalid numeric ID received for getAudioById', { audioIdStr });
       return null;
     }
 
     const audios = await query<Audio>(
-      `SELECT * FROM audios WHERE id = ?`,
+      "SELECT * FROM audios WHERE id = ?",
       [audioId]
     );
 
     const result = audios[0] || null;
     return result;
   } catch (error) {
-    log.error(`Error fetching audio by ID`, { audioId: audioIdStr, error: formatError(error) });
+    log.error("Error fetching audio by ID", { audioId: audioIdStr, error: formatError(error) });
     throw error;
   }
 };
@@ -104,11 +104,11 @@ export const getAudioById = async (audioIdStr: string): Promise<Audio | null> =>
 export const getConversationAudios = async (conversationId: string): Promise<Audio[]> => {
   try {
     return await query<Audio>(
-      `SELECT * FROM audios WHERE conversationId = ? ORDER BY createdAt ASC`,
+      "SELECT * FROM audios WHERE conversationId = ? ORDER BY createdAt ASC",
       [conversationId]
     );
   } catch (error) {
-    log.error(`Error fetching conversation audios`, { conversationId, error: formatError(error) });
+    log.error("Error fetching conversation audios", { conversationId, error: formatError(error) });
     throw error;
   }
 };
@@ -160,7 +160,7 @@ export const updateAudioStatus = async (
       );
       log.debug("Audio status updated", { audioId, status });
     } catch (error) {
-      log.error(`Error updating audio status`, { audioId, status, error: formatError(error) });
+      log.error("Error updating audio status", { audioId, status, error: formatError(error) });
       throw error;
     }
   });
@@ -169,12 +169,12 @@ export const updateAudioStatus = async (
 export const getAudioByPath = async (filePath: string): Promise<Audio | null> => {
   try {
     const audios = await query<Audio>(
-      `SELECT * FROM audios WHERE audioFile = ?`,
+      "SELECT * FROM audios WHERE audioFile = ?",
       [filePath]
     );
     return audios[0] || null;
   } catch (error) {
-    log.error(`Failed to get audio by path`, { filePath, error: formatError(error) });
+    log.error("Failed to get audio by path", { filePath, error: formatError(error) });
     throw error;
   }
 };

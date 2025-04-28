@@ -1,7 +1,7 @@
-import { randomUUID } from 'crypto';
-import fs from 'fs';
-import { mkdir, unlink, writeFile } from 'fs/promises';
-import { basename, join, normalize, relative } from 'path';
+import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { basename, join, normalize, relative } from 'node:path';
 import { config } from '../config';
 import { log } from './logger';
 
@@ -111,6 +111,6 @@ export const getFileAge = (filePath: string): number => {
     const ageMs = Date.now() - stats.mtimeMs;
     return ageMs / (1000 * 60 * 60); // Convert to hours
   } catch {
-    return Infinity; // If file doesn't exist or error, return Infinity
+    return Number.POSITIVE_INFINITY; // If file doesn't exist or error, return Infinity
   }
 };

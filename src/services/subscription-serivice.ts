@@ -34,29 +34,29 @@ interface ActiveSubscriptionStatus {
 }
 
 async function findUserIdForNotification(payload: VerifiedNotificationPayload): Promise<string | null> {
-    log.debug(`Attempting to find user ID`, { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
+    log.debug("Attempting to find user ID", { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
     if (payload.appAccountToken) {
         try {
             const userResult = await query<{ id: string }>('SELECT id FROM users WHERE appAccountToken = ? LIMIT 1', [payload.appAccountToken]);
             if (userResult.length > 0) {
-                 log.info(`Found user via appAccountToken`, { userId: userResult[0].id, appAccountToken: payload.appAccountToken });
+                 log.info("Found user via appAccountToken", { userId: userResult[0].id, appAccountToken: payload.appAccountToken });
                  return userResult[0].id;
             }
-             log.warn(`appAccountToken provided but no matching user found`, { appAccountToken: payload.appAccountToken });
+             log.warn("appAccountToken provided but no matching user found", { appAccountToken: payload.appAccountToken });
         } catch (error) {
-             log.error(`Database error looking up user by appAccountToken`, { appAccountToken: payload.appAccountToken, error: formatError(error) });
+             log.error("Database error looking up user by appAccountToken", { appAccountToken: payload.appAccountToken, error: formatError(error) });
         }
     }
     try {
          const subResult = await query<{ userId: string }>('SELECT userId FROM subscriptions WHERE originalTransactionId = ? ORDER BY createdAt DESC LIMIT 1', [payload.originalTransactionId]);
          if (subResult.length > 0) {
-              log.info(`Found user via originalTransactionId`, { userId: subResult[0].userId, originalTransactionId: payload.originalTransactionId });
+              log.info("Found user via originalTransactionId", { userId: subResult[0].userId, originalTransactionId: payload.originalTransactionId });
               return subResult[0].userId;
          }
     } catch (error) {
-         log.error(`Database error looking up user by originalTransactionId`, { originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+         log.error("Database error looking up user by originalTransactionId", { originalTransactionId: payload.originalTransactionId, error: formatError(error) });
     }
-    log.error(`Could not find user ID`, { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
+    log.error("Could not find user ID", { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
     return null;
 }
 
@@ -122,7 +122,7 @@ export const verifyAndSaveSubscription = async (
   userId: string,
   payload: VerifiedNotificationPayload
 ): Promise<Result<{ subscriptionId: string }>> => {
-  log.info(`Verifying and saving subscription info`, { userId, originalTransactionId: payload.originalTransactionId });
+  log.info("Verifying and saving subscription info", { userId, originalTransactionId: payload.originalTransactionId });
 
   // Use transaction for atomicity
   return await transaction<Result<{ subscriptionId: string }>>(async () => {
@@ -132,7 +132,7 @@ export const verifyAndSaveSubscription = async (
       // 1. Verify user exists before proceeding
       const userCheck = await query<{ id: string }>('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
       if (userCheck.length === 0) {
-          log.error(`User provided for subscription verification not found in database`, { userId, originalTransactionId: payload.originalTransactionId });
+          log.error("User provided for subscription verification not found in database", { userId, originalTransactionId: payload.originalTransactionId });
           throw new Error(`User ${userId} not found. Cannot save subscription ${recordId}.`);
       }
 
@@ -156,18 +156,18 @@ export const verifyAndSaveSubscription = async (
         renewalJson
       );
 
-      log.info(`Successfully verified and saved subscription record`, { recordId, userId, status: internalStatus });
+      log.info("Successfully verified and saved subscription record", { recordId, userId, status: internalStatus });
       return { success: true, data: { subscriptionId: recordId } };
 
     } catch (error) {
       // Log specific error from this function context
-      log.error(`Database error during verifyAndSaveSubscription`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+      log.error("Database error during verifyAndSaveSubscription", { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
       // Re-throw to trigger transaction rollback
       throw error;
     }
   }).catch((error): Result<{ subscriptionId: string }> => {
       // Catch errors specifically from the transaction execution (including re-thrown ones)
-      log.error(`Transaction failed for verifyAndSaveSubscription`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+      log.error("Transaction failed for verifyAndSaveSubscription", { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
       // Return a failure Result
       return { success: false, error: error instanceof Error ? error : new Error('Failed to verify/save subscription in database transaction') };
   });
@@ -178,11 +178,11 @@ export const updateSubscriptionFromNotification = async (payload: VerifiedNotifi
     const userId = await findUserIdForNotification(payload);
 
     if (!userId) {
-        log.error(`Failed to find user for notification`, { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
+        log.error("Failed to find user for notification", { originalTransactionId: payload.originalTransactionId, appAccountToken: payload.appAccountToken });
         return { success: false, error: new Error('User mapping not found for transaction notification') };
     }
 
-    log.info(`Processing notification update`, { userId, originalTransactionId: payload.originalTransactionId });
+    log.info("Processing notification update", { userId, originalTransactionId: payload.originalTransactionId });
 
     // Use transaction for atomicity
     return await transaction<Result<void>>(async () => {
@@ -190,7 +190,7 @@ export const updateSubscriptionFromNotification = async (payload: VerifiedNotifi
           // 2. Verify user exists (redundant check, but safe)
           const userCheck = await query<{ id: string }>('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
           if (userCheck.length === 0) {
-              log.error(`User (found via notification mapping) not found in DB`, { userId, recordId: payload.originalTransactionId });
+              log.error("User (found via notification mapping) not found in DB", { userId, recordId: payload.originalTransactionId });
               throw new Error(`User ${userId} mapping exists, but user record not found for subscription ${payload.originalTransactionId}`);
           }
 
@@ -208,7 +208,7 @@ export const updateSubscriptionFromNotification = async (payload: VerifiedNotifi
               payload.type
           );
           if (internalStatus === 'unknown') {
-              log.warn(`Could not determine internal status via helper`, { transactionId: payload.transactionId });
+              log.warn("Could not determine internal status via helper", { transactionId: payload.transactionId });
           }
 
           // 4. Call the internal upsert function
@@ -221,25 +221,25 @@ export const updateSubscriptionFromNotification = async (payload: VerifiedNotifi
             renewalJson
           );
 
-          log.info(`Successfully updated subscription record via notification`, { userId, originalTransactionId: payload.originalTransactionId, status: internalStatus });
+          log.info("Successfully updated subscription record via notification", { userId, originalTransactionId: payload.originalTransactionId, status: internalStatus });
           return { success: true, data: undefined }; // Return success Result
 
         } catch (error) {
              // Log specific error from this function context
-            log.error(`Database error during updateSubscriptionFromNotification`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+            log.error("Database error during updateSubscriptionFromNotification", { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
              // Re-throw to trigger transaction rollback
             throw error;
         }
     }).catch((error): Result<void> => {
          // Catch errors specifically from the transaction execution (including re-thrown ones)
-         log.error(`Transaction failed for updateSubscriptionFromNotification`, { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
+         log.error("Transaction failed for updateSubscriptionFromNotification", { userId, originalTransactionId: payload.originalTransactionId, error: formatError(error) });
          // Return a failure Result
          return { success: false, error: error instanceof Error ? error : new Error('Failed to update subscription in database transaction') };
     });
 };
 
 export const hasActiveSubscription = async (userId: string): Promise<ActiveSubscriptionStatus> => {
-    log.debug(`Checking active subscription status`, { userId });
+    log.debug("Checking active subscription status", { userId });
     try {
         const nowSec = Math.floor(Date.now() / 1000);
         const results = await query<SubscriptionRecord>(
@@ -252,19 +252,18 @@ export const hasActiveSubscription = async (userId: string): Promise<ActiveSubsc
         if (results.length > 0) {
             const sub = results[0];
             const expiresMs = sub.expiresDate ? sub.expiresDate * 1000 : null;
-            log.info(`User has an active subscription`, { userId, productId: sub.productId, expires: expiresMs ? new Date(expiresMs).toISOString() : 'Never', status: sub.status });
+            log.info("User has an active subscription", { userId, productId: sub.productId, expires: expiresMs ? new Date(expiresMs).toISOString() : 'Never', status: sub.status });
             return {
                 isActive: true,
                 expiresDate: expiresMs,
                 type: sub.productId,
                 subscriptionId: sub.id
             };
-        } else {
-             log.info(`User does not have an active subscription`, { userId });
-             return { isActive: false };
         }
+             log.info("User does not have an active subscription", { userId });
+             return { isActive: false };
     } catch (error) {
-         log.error(`Database error checking subscription status`, { userId, error: formatError(error) });
+         log.error("Database error checking subscription status", { userId, error: formatError(error) });
          return { isActive: false };
     }
 };
@@ -296,7 +295,7 @@ const determineSubscriptionStatus = (
   }
   
   if (!expiresDateMs) {
-    log.warn(`Cannot determine status: expiresDate is missing and type is not Non-Consumable/Non-Renewing.`);
+    log.warn("Cannot determine status: expiresDate is missing and type is not Non-Consumable/Non-Renewing.");
     return 'unknown';
   }
   

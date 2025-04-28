@@ -14,7 +14,7 @@ export const sendTranscriptNotification = async (
     payload: { conversationId, content },
     timestamp: new Date().toISOString()
   });
-  log.debug(`Queued transcript notification`, { conversationId, userId });
+  log.debug("Queued transcript notification", { conversationId, userId });
 };
 
 export const sendAnalysisNotification = async (
@@ -30,7 +30,7 @@ export const sendAnalysisNotification = async (
     payload: { conversationId, content },
     timestamp: new Date().toISOString()
   });
-  log.debug(`Queued analysis notification`, { conversationId, userId });
+  log.debug("Queued analysis notification", { conversationId, userId });
 };
 
 export const sendStatusNotification = async (
@@ -47,7 +47,7 @@ export const sendStatusNotification = async (
     payload: { conversationId, status, ...(error && { error }) },
     timestamp: new Date().toISOString()
   });
-  log.debug(`Queued status notification`, { status, conversationId, userId });
+  log.debug("Queued status notification", { status, conversationId, userId });
 };
 
 export const sendConversationNotification = async (
@@ -78,7 +78,7 @@ export const sendConversationNotification = async (
         timestamp
       });
     }
-    log.debug(`Queued conversation completed notifications`, { conversationId, userId });
+    log.debug("Queued conversation completed notifications", { conversationId, userId });
   } else {
     // Queue status update for other statuses
     await notificationQueue.add('status', {
@@ -88,7 +88,7 @@ export const sendConversationNotification = async (
       payload: { conversationId, status, ...payload },
       timestamp
     });
-    log.debug(`Queued conversation started notification`, { conversationId, userId });
+    log.debug("Queued conversation started notification", { conversationId, userId });
   }
 };
 
@@ -106,5 +106,5 @@ export const sendAudioNotification = async (
     payload: { audioId, status, conversationId },
     timestamp: new Date().toISOString()
   });
-  log.debug(`Queued audio notification`, { status, audioId, conversationId, userId });
+  log.debug("Queued audio notification", { status, audioId, conversationId, userId });
 };

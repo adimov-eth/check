@@ -38,10 +38,9 @@ async function performAuthentication(token: string, clientIp: string): Promise<R
     if (verificationResult.success) {
         // The userId from verifySessionToken should already be in the correct internal format
         return { success: true, data: { userId: verificationResult.data.userId } };
-    } else {
+    }
         // Return the failure result (which should be an AuthenticationError)
         return verificationResult;
-    }
 }
 // --- END MODIFICATION ---
 
@@ -88,9 +87,8 @@ export async function handleAuthMessage(
             },
         }));
         return true;
-    } else {
+    }
         log.warn(`WebSocket authentication failed for client (IP: ${clientIp}): ${authResult.error?.message || 'Unknown error during verification'}`);
         ws.close(4001, 'Authentication failed');
         return false;
-    }
 }

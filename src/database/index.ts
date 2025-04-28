@@ -18,7 +18,7 @@ const initializeDatabase = (): BunDatabase => {
     db.exec('PRAGMA temp_store = MEMORY;');
     log.info('Applied database PRAGMA optimizations.');
   } catch (error) {
-      log.error(`Error applying PRAGMA settings`, { error: formatError(error) });
+      log.error("Error applying PRAGMA settings", { error: formatError(error) });
       // Decide if this is fatal or not. For now, log and continue.
   }
 
@@ -34,7 +34,7 @@ export const query = async <T>(sql: string, params: unknown[] = []): Promise<T[]
     const stmt = dbInstance.query<T, SQLQueryBindings[]>(sql);
     return stmt.all(...params as SQLQueryBindings[]);
   } catch (error) {
-    log.error(`Database query error`, { sql, params, error: formatError(error) });
+    log.error("Database query error", { sql, params, error: formatError(error) });
     throw error; // Re-throw to allow calling functions to handle
   }
 };
@@ -46,7 +46,7 @@ export const queryOne = async <T>(sql: string, params: unknown[] = []): Promise<
     const result = stmt.get(...params as SQLQueryBindings[]);
     return result === undefined ? null : result;
   } catch (error) {
-    log.error(`Database queryOne error`, { sql, params, error: formatError(error) });
+    log.error("Database queryOne error", { sql, params, error: formatError(error) });
     throw error;
   }
 };
@@ -57,7 +57,7 @@ export const run = async (sql: string, params: unknown[] = []): Promise<void> =>
     const stmt = dbInstance.prepare(sql);
     stmt.run(...params as SQLQueryBindings[]);
   } catch (error) {
-    log.error(`Database run error`, { sql, params, error: formatError(error) });
+    log.error("Database run error", { sql, params, error: formatError(error) });
     throw error;
   }
 };
@@ -70,7 +70,7 @@ export const transaction = async <T>(callback: (db: BunDatabase) => Promise<T> |
     // Execute the transaction function provided by Bun SQLite
     return await tx();
   } catch (error) {
-    log.error(`Database transaction error`, { error: formatError(error) });
+    log.error("Database transaction error", { error: formatError(error) });
     throw error;
   }
 };
@@ -81,7 +81,7 @@ const closeDatabase = (): void => {
     dbInstance.close();
     log.info('Database connection closed.');
   } catch (error) {
-    log.error(`Error closing database connection`, { error: formatError(error) });
+    log.error("Error closing database connection", { error: formatError(error) });
   }
 }
 
