@@ -71,50 +71,53 @@ router.post(
 	"/upload",
 	requireAuth, // 1. Authenticate first
 	audioRateLimiter, // 2. Apply rate limiting
-	upload.single("audio"), // 3. Handle file upload
-	asyncHandler(
-		async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-			// Use asyncHandler
-			// userId is guaranteed by requireAuth
+	async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+		const uploadSingle = upload.single("audio");
+		uploadSingle(req, res, async (err: unknown) => {
+			if (err) return next(err); // Pass Multer errors to error middleware
+
 			const userId = (req as AuthenticatedRequest).userId;
 
 			// Validate request body
 			const validationResult = uploadAudioSchema.safeParse(req.body);
 			if (!validationResult.success) {
-				throw new ValidationError(
-					`Invalid request: ${validationResult.error.errors.map((e) => e.message).join(", ")}`,
+				return next(
+					new ValidationError(
+						`Invalid request: ${validationResult.error.errors.map((e) => e.message).join(", ")}`,
+					),
 				);
 			}
 
-			const { conversationId, audioKey } = validationResult.data; // Get audioKey
+			const { conversationId, audioKey } = validationResult.data;
 
 			// Check if conversation exists
 			const conversation = await getConversationById(conversationId);
 			if (!conversation) {
-				throw new NotFoundError(`Conversation not found: ${conversationId}`);
+				return next(
+					new NotFoundError(`Conversation not found: ${conversationId}`),
+				);
 			}
 			if (conversation.userId !== userId) {
-				throw new AuthorizationError(
-					`User does not own conversation ${conversationId}`,
+				return next(
+					new AuthorizationError(
+						`User does not own conversation ${conversationId}`,
+					),
 				);
 			}
 
 			// Validate file upload
 			if (!req.file) {
-				throw new ValidationError("No audio file provided");
+				return next(new ValidationError("No audio file provided"));
 			}
 
 			// Add constraint check BEFORE saving
 			try {
 				await checkAudioUploadConstraints({ conversationId, userId, audioKey });
 			} catch (error) {
-				// Pass validation errors (like max uploads) to the error handler
-				// No need to save file if constraints fail
 				return next(error);
 			}
 
 			// Save file and create record
-			// Include audioKey in the filename for easier identification if needed
 			const fileExtension =
 				req.file.originalname.split(".").pop() ||
 				req.file.mimetype.split("/")[1] ||
@@ -128,43 +131,17 @@ router.post(
 					conversationId,
 					userId,
 					audioFile: filePath,
-					audioKey: audioKey, // Store the audioKey
+					audioKey: audioKey,
 				});
 			} catch (error) {
-				// Explicitly catch and pass errors to the next error handler
-				const reqWithNext = req as Request & { next?: NextFunction };
-				const next = reqWithNext.next;
-
-				// Log validation errors
-				if (error instanceof ValidationError) {
-					log.warn("Validation error during audio record creation", {
-						conversationId,
-						audioKey,
-						error: formatError(error),
-					});
-					// Pass ValidationError to the central error handler
-					if (next) return next(error);
-				}
-
-				// Log other unexpected errors
-				log.error("Unexpected error during audio record creation", {
+				log.error("Error creating audio record", {
 					conversationId,
 					audioKey,
 					error: formatError(error),
 				});
-				// Pass other errors to the central error handler
-				if (next) return next(error);
-
-				// Fallback if next is somehow not available (should not happen with asyncHandler)
-				// Send a generic error response directly
-				res
-					.status(500)
-					.json({ error: "Internal server error during audio creation." });
-				return; // Explicitly return void to satisfy TypeScript
+				return next(error);
 			}
 
-			// If createAudioRecord was successful, proceed to queue job
-			// Queue for processing
 			await audioQueue.add(
 				"process-audio",
 				{
@@ -172,7 +149,7 @@ router.post(
 					conversationId,
 					audioPath: filePath,
 					userId,
-					audioKey: audioKey, // Pass audioKey to the job
+					audioKey: audioKey,
 				},
 				{
 					attempts: 3,
@@ -191,8 +168,8 @@ router.post(
 				audioId: audio.id,
 				url: filePath,
 			});
-		},
-	),
+		});
+	},
 );
 
 // Get audio by ID
