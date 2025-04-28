@@ -8,6 +8,7 @@ import {
 import { audioRateLimiter } from "@/middleware/rate-limit";
 import { audioQueue } from "@/queues";
 import {
+	checkAudioUploadConstraints,
 	createAudioRecord,
 	getAudioById,
 	getConversationAudios,
@@ -101,6 +102,15 @@ router.post(
 			// Validate file upload
 			if (!req.file) {
 				throw new ValidationError("No audio file provided");
+			}
+
+			// Add constraint check BEFORE saving
+			try {
+				await checkAudioUploadConstraints({ conversationId, userId, audioKey });
+			} catch (error) {
+				// Pass validation errors (like max uploads) to the error handler
+				// No need to save file if constraints fail
+				return next(error);
 			}
 
 			// Save file and create record

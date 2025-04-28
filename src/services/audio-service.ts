@@ -219,3 +219,83 @@ export const getAudioByPath = async (
 		throw error;
 	}
 };
+
+/**
+ * Checks if a new audio record can be created based on constraints.
+ * Does NOT insert the record.
+ * Throws ValidationError if constraints are violated.
+ */
+export const checkAudioUploadConstraints = async ({
+	conversationId,
+	userId,
+	audioKey,
+}: {
+	conversationId: string;
+	userId: string;
+	audioKey: string;
+}): Promise<{ recordingType: string }> => {
+	try {
+		// Check conversation existence and ownership first
+		const conversationResult = await query<{ recordingType: string }>(
+			"SELECT recordingType FROM conversations WHERE id = ? AND userId = ? LIMIT 1",
+			[conversationId, userId],
+		);
+		const conversationDetails = conversationResult[0];
+		if (!conversationDetails) {
+			throw new Error(
+				// Or NotFoundError if preferred
+				`Conversation ${conversationId} not found or does not belong to user ${userId}`,
+			);
+		}
+		const { recordingType } = conversationDetails;
+
+		// Check existing key and count
+		const existingAudios = await query<{
+			count: number;
+			existingKey: number;
+		}>(
+			`SELECT
+				COUNT(*) as count,
+				MAX(CASE WHEN a.audioKey = ? THEN 1 ELSE 0 END) as existingKey
+			FROM audios a
+			WHERE a.conversationId = ?`,
+			[audioKey, conversationId],
+		);
+
+		const result = existingAudios[0]; // Should always return a row with count/existingKey (even if 0)
+		if (!result) {
+			// This case should ideally not happen if the conversation exists
+			throw new Error(
+				`Failed to query existing audio counts for conversation ${conversationId}`,
+			);
+		}
+
+		const { count: audioCount, existingKey } = result;
+
+		if (existingKey === 1) {
+			throw new ValidationError(
+				`Audio with key "${audioKey}" already exists for conversation ${conversationId}`,
+			);
+		}
+
+		const maxAudios = recordingType === "live" ? 1 : 2; // Simplified: live=1, separate=2
+		if (audioCount >= maxAudios) {
+			throw new ValidationError(
+				`Maximum number of audios (${maxAudios}) reached for ${recordingType} conversation ${conversationId}`,
+			);
+		}
+
+		// All checks passed
+		return { recordingType }; // Return type for potential future use
+	} catch (error) {
+		// Log specific errors if needed, otherwise re-throw
+		log.error("Error checking audio upload constraints", {
+			conversationId,
+			audioKey,
+			userId,
+			error: formatError(error),
+		});
+		// Re-throw ValidationError or other caught errors
+		throw error;
+	}
+};
