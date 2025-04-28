@@ -1,4 +1,5 @@
 import { query, run, transaction } from "@/database";
+import { ValidationError } from "@/middleware/error";
 import type { Audio } from "@/types";
 import { formatError } from "@/utils/error-formatter";
 import { log } from "@/utils/logger";
@@ -58,15 +59,15 @@ export const createAudioRecord = async ({
 			const { count: audioCount, recordingType, existingKey } = result;
 
 			if (existingKey === 1) {
-				throw new Error(
+				throw new ValidationError(
 					`Audio with key "${audioKey}" already exists for conversation ${conversationId}`,
 				);
 			}
 
 			const maxAudios = recordingType === "separate" ? 2 : 1;
 			if (audioCount >= maxAudios) {
-				throw new Error(
-					`Maximum number of audios (${maxAudios}) reached for conversation ${conversationId}`,
+				throw new ValidationError(
+					`Maximum number of audios (${maxAudios}) reached for ${recordingType} conversation ${conversationId}`,
 				);
 			}
 
