@@ -177,3 +177,6 @@ dist
 
 # Database files
 app.db*
+
+# npm configuration
+.npmrc
