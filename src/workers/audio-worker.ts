@@ -89,8 +89,23 @@ const _checkConversationCompletionAndQueueGpt = async (
 	}
 };
 
-const cleanupOnFailure = async (audioPath: string): Promise<void> => {
+const cleanupOnFailure = async (audioPath: string, error: unknown): Promise<void> => {
 	try {
+		// Check if it's a quota error or rate limit error
+		const errorMessage = formatError(error);
+		const isQuotaError = errorMessage.includes('429') || 
+			errorMessage.toLowerCase().includes('quota') ||
+			errorMessage.toLowerCase().includes('rate limit');
+		
+		// Don't delete files on quota errors - we might want to retry later
+		if (isQuotaError) {
+			log.warn("Skipping file deletion due to quota/rate limit error", { 
+				audioPath,
+				error: errorMessage 
+			});
+			return;
+		}
+		
 		await deleteFile(audioPath);
 		log.info("Cleaned up audio file after failure", { audioPath });
 	} catch (error) {
@@ -111,9 +126,33 @@ const processAudio = async (job: Job<AudioJob>): Promise<void> => {
 		conversationId,
 		userId,
 		audioPath,
+		attemptNumber: job.attemptsMade + 1,
+		maxAttempts: job.opts.attempts
 	});
 
 	try {
+		// Check if file exists before processing
+		const fs = await import('fs/promises');
+		try {
+			await fs.access(audioPath);
+		} catch {
+			// File doesn't exist - likely deleted in a previous attempt
+			const errorMessage = `Audio file not found: ${audioPath}`;
+			log.error("Audio file missing", { audioId, audioPath, conversationId });
+			
+			// Update status and don't retry
+			await updateAudioStatus(audioId, "failed", undefined, errorMessage);
+			await sendAudioNotification(
+				userId,
+				audioId.toString(),
+				conversationId,
+				"failed",
+			);
+			
+			// Don't throw - this prevents retries for missing files
+			return;
+		}
+
 		// Update audio status to processing
 		log.debug("Updating audio status to processing", { audioId });
 		await updateAudioStatus(audioId, "processing");
@@ -153,18 +192,35 @@ const processAudio = async (job: Job<AudioJob>): Promise<void> => {
 		});
 	} catch (error) {
 		const errorMessage = formatError(error);
+		const isQuotaError = errorMessage.includes('429') || 
+			errorMessage.toLowerCase().includes('quota') ||
+			errorMessage.toLowerCase().includes('rate limit');
+		
 		log.error("Audio processing failed", {
 			jobId: job.id,
 			error: errorMessage,
 			audioId,
 			conversationId,
 			duration: Date.now() - startTime,
+			isQuotaError,
+			attemptNumber: job.attemptsMade + 1
 		});
 
 		try {
-			// Update audio status to failed
-			log.debug("Updating audio status to failed", { audioId });
-			await updateAudioStatus(audioId, "failed", undefined, errorMessage);
+			// For quota errors on last attempt, update with specific message
+			if (isQuotaError && job.attemptsMade + 1 >= (job.opts.attempts || 3)) {
+				await updateAudioStatus(
+					audioId, 
+					"failed", 
+					undefined, 
+					"OpenAI quota exceeded. Please try again later or check your API key quota."
+				);
+			} else {
+				// Update audio status to failed
+				log.debug("Updating audio status to failed", { audioId });
+				await updateAudioStatus(audioId, "failed", undefined, errorMessage);
+			}
+			
 			await sendAudioNotification(
 				userId,
 				audioId.toString(),
@@ -172,9 +228,9 @@ const processAudio = async (job: Job<AudioJob>): Promise<void> => {
 				"failed",
 			);
 
-			// Cleanup the audio file on failure
+			// Cleanup the audio file on failure (with quota check)
 			log.debug("Cleaning up audio file after failure", { audioPath });
-			await cleanupOnFailure(audioPath);
+			await cleanupOnFailure(audioPath, error);
 		} catch (updateError) {
 			log.error("Failed to update audio status after error", {
 				audioId,

@@ -12,6 +12,7 @@
     "dev:workers": "bun --watch src/workers/index.ts",
     "db:migrate": "bun src/scripts/init-db.ts",
     "lint": "eslint src --ext .ts",
+    "check:openai": "bun src/scripts/check-openai-quota.ts",
     "queue:clean": "bun src/scripts/clean-queues.ts clean",
     "queue:clean:audio": "bun src/scripts/clean-queues.ts clean --audio",
     "queue:clean:gpt": "bun src/scripts/clean-queues.ts clean --gpt",
